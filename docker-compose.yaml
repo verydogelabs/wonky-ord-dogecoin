@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  rustup:
+    build:
+      context: .
+      dockerfile: ./ord-cli/Dockerfile
+      args:
+        DOGECOIN_RPC_PORT: ${DOGECOIN_RPC_PORT}
+    env_file:
+      - .env
+    tty: true
+    restart: "no"
+    links:
+      - dogecoin-core
+    ports:
+      - 8080:80
+    volumes:
+      - dog-data:/root/.dogecoin
+
+volumes:
+  dog-data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /mnt/ord-node/${DOGECOIN_P2P_PORT:-18444}/dog-data

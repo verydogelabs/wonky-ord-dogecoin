@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+CHAIN=$1
+DOMAIN=$2
+
+touch ~/.hushlogin
+
+sed -i -E 's/#?PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+mkdir -p \
+  /etc/systemd/system/dogecoind.service.d \
+  /etc/systemd/system/ord.service.d
+
+printf "[Service]\nEnvironment=CHAIN=%s\n" $CHAIN \
+  | tee /etc/systemd/system/dogecoind.service.d/override.conf \
+  > /etc/systemd/system/ord.service.d/override.conf
+
+hostnamectl set-hostname $DOMAIN
+
+apt-get install --yes \
+  acl \
+  clang \
+  libsqlite3-dev\
+  libssl-dev \
+  pkg-config \
+  ufw \
+  vim
+
+ufw default allow outgoing
+ufw default deny incoming
+
+ufw allow 8080
+ufw allow http
+ufw allow https
+ufw allow ssh
+
+case $CHAIN in
+  main)
+    ufw allow 8333
+    ;;
+  signet)
+    ufw allow 38333
+    ;;
+  test)
+    ufw allow 18333
+    ;;
+  *)
+    echo "Unknown chain: $CHAIN"
+    exit 1
+    ;;
+esac
+
+ufw --force enable
+
+if ! which dogecoind; then
+  ./bin/install-dogecoin-core-linux
+fi
+
+dogecoind --version
+
+if [[ ! -e ~/.cargo/env ]]; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+fi
+
+source ~/.cargo/env
+
+rustup update stable
+
+cargo build --release
+if [[ -f /usr/local/bin/ord ]]; then
+  mv /usr/local/bin/ord /usr/local/bin/ord.bak
+fi
+cp target/release/ord /usr/local/bin/ord
+
+id --user dogecoin || useradd --system dogecoin
+id --user ord || useradd --system ord
+
+cp deploy/dogecoind.service /etc/systemd/system/
+mkdir -p /etc/dogecoin
+cp deploy/dogecoin.conf /etc/dogecoin/dogecoin.conf
+systemctl daemon-reload
+systemctl enable dogecoind
+systemctl restart dogecoind
+
+case $CHAIN in
+  main)
+    COOKIE_FILE_DIR=/var/lib/dogecoind
+    ;;
+  signet)
+    COOKIE_FILE_DIR=/var/lib/dogecoind/signet
+    ;;
+  test)
+    COOKIE_FILE_DIR=/var/lib/dogecoind/testnet3
+    ;;
+  *)
+    echo "Unknown chain: $CHAIN"
+    exit 1
+    ;;
+esac
+
+while [[ ! -f $COOKIE_FILE_DIR/.cookie ]]; do
+  echo "Waiting for dogecoind…"
+  sleep 1
+done
+
+setfacl -m ord:x /var/lib/dogecoind
+setfacl -m ord:x $COOKIE_FILE_DIR
+setfacl -dm ord:r $COOKIE_FILE_DIR
+setfacl -m ord:r $COOKIE_FILE_DIR/.cookie
+
+cp deploy/ord.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable ord
+systemctl restart ord
+
+while ! curl --fail https://$DOMAIN/status; do
+  echo "Waiting for ord at https://$DOMAIN/status…"
+  sleep 1
+done

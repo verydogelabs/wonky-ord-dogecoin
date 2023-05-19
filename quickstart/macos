@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+# install homebrew
+if ! command -v brew; then
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+
+# check homebrew
+brew --version
+
+# install dogecoin
+if ! command -v dogecoind; then
+  brew install dogecoin
+fi
+
+# check dogecoind
+dogecoind --version
+
+# write config
+if [[ ! -f ~/Library/Application\ Support/Dogecoin/dogecoin.conf ]]; then
+  printf 'txindex=1\nsignet=1\n' > ~/Library/Application\ Support/Dogecoin/dogecoin.conf
+fi
+
+# start dogecoind
+if ! dogecoin-cli getblockchaininfo; then
+  brew services start dogecoin
+fi
+
+# check dogecoind
+dogecoin-cli getblockchaininfo | grep signet
+
+# install ord
+if ! command -v ord; then
+  curl --proto '=https' --tlsv1.2 -fsLS https://raw.githubusercontent.com/apezord/ord-dogecoin/master/install.sh?token=GHSAT0AAAAAAB657S54D565E7TB4B3NBCE4Y736PRQ | bash -s
+fi
+
+# check ord
+ord --version
