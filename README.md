@@ -8,6 +8,12 @@
 
 We included the real wonky block rewards from block 0 until block 144,999. We invite you to critically review our code in `src/epoch.rs`. We are convinced that doginals should use actual block rewards instead of a simplified version.
 
+## Required env vars
+
+On the root level of this repo you'll find a `subsidies.json` and `starting_sats.json` file. When starting ord you will need to set the location of these files to env variables. Example: 
+
+If your `wonky-ord-dogecoin` dir is `/home/dogeuser/wonky-ord-dogecoin` then set the vars: `SUBSIDIES_PATH=/home/dogeuser/wonky-ord-dogecoin/subsidies.json` and `STARTING_SATS_PATH=/home/dogeuser/wonky-ord-dogecoin/starting_sats.json`.
+
 ## README.md from apezord/ord-dogecoin
 
 You should periodically create checkpoints of the redb database that you can restore from. Dogecoin has more reorgs than bitcoin due to its 1 minute block times and casey/ord does not handle reorgs. There is an open issue [here](https://github.com/casey/ord/issues/148).
