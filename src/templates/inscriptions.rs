@@ -7,6 +7,11 @@ pub(crate) struct InscriptionsHtml {
   pub(crate) next: Option<u64>,
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct InscriptionsJson {
+  pub inscriptions: Vec<InscriptionId>,
+}
+
 impl PageContent for InscriptionsHtml {
   fn title(&self) -> String {
     "Shibescription".into()

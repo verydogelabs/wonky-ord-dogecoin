@@ -43,7 +43,6 @@ use {
   clap::{ArgGroup, Parser},
   derive_more::{Display, FromStr},
   html_escaper::{Escape, Trusted},
-  htmlescape::encode_attribute,
   lazy_static::lazy_static,
   regex::Regex,
   serde::{Deserialize, Deserializer, Serialize, Serializer},

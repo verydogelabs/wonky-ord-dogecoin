@@ -16,6 +16,18 @@ pub(crate) struct InscriptionHtml {
   pub(crate) timestamp: DateTime<Utc>,
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct InscriptionJson {
+  pub tx_id: String,
+  pub vout: u32,
+  pub content_length: Option<usize>,
+  pub content_type: Option<String>,
+  pub genesis_height: u64,
+  pub inscription_id: InscriptionId,
+  pub inscription_number: u64,
+  pub timestamp: u32,
+}
+
 impl PageContent for InscriptionHtml {
   fn title(&self) -> String {
     format!("Shibescription {}", self.number)

@@ -2,11 +2,12 @@ use {super::*, boilerplate::Boilerplate};
 
 pub(crate) use {
   block::BlockHtml,
+  block::BlockJson,
   home::HomeHtml,
   iframe::Iframe,
   input::InputHtml,
-  inscription::InscriptionHtml,
-  inscriptions::InscriptionsHtml,
+  inscription::{InscriptionHtml,InscriptionJson},
+  inscriptions::{InscriptionsHtml},
   output::OutputHtml,
   page_config::PageConfig,
   preview::{

@@ -28,6 +28,7 @@
   <a
     data-inputs="{{self.inputs_per_tx.get(&txid).unwrap_or(&String::new())}}"
     data-outputs="{{self.outputs_per_tx.get(&txid).unwrap_or(&String::new())}}"
+    data-output-values="{{self.output_values_per_tx.get(&txid).unwrap_or(&String::new())}}"
     %% if let Some(inscription_tuple) = self.inscriptions_per_tx.get(&txid) {
     %% let (inscription_id, content_type, content) = inscription_tuple;
     data-inscription-id="{{inscription_id.to_string()}}"

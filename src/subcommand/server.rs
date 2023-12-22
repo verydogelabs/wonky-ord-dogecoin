@@ -6,13 +6,14 @@ use {
   super::*,
   crate::page_config::PageConfig,
   crate::templates::{
-    BlockHtml, HomeHtml, InputHtml, InscriptionHtml, InscriptionsHtml, OutputHtml, PageContent,
+    BlockJson, BlockHtml, HomeHtml, InputHtml, InscriptionHtml, InscriptionJson,
+    InscriptionsHtml, OutputHtml, PageContent,
     PageHtml, PreviewAudioHtml, PreviewImageHtml, PreviewPdfHtml, PreviewTextHtml,
     PreviewUnknownHtml, PreviewVideoHtml, RangeHtml, RareTxt, SatHtml, TransactionHtml,
   },
   axum::{
     body,
-    extract::{Extension, Path, Query},
+    extract::{Extension, Json, Path, Query},
     headers::UserAgent,
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
@@ -35,6 +36,7 @@ use {
     set_header::SetResponseHeaderLayer,
   },
   std::collections::HashMap,
+  serde_json::to_string,
 };
 
 mod error;
@@ -60,6 +62,11 @@ enum SpawnConfig {
   Https(AxumAcceptor),
   Http,
   Redirect(String),
+}
+
+#[derive(Deserialize)]
+struct InscriptionsByOutputsQuery {
+  outputs: String,
 }
 
 #[derive(Deserialize)]
@@ -147,6 +154,7 @@ impl Server {
         .route("/", get(Self::home))
         .route("/block-count", get(Self::block_count))
         .route("/block/:query", get(Self::block))
+        .route("/blocks/:query/:endquery", get(Self::blocks))
         .route("/bounties", get(Self::bounties))
         .route("/content/:inscription_id", get(Self::content))
         .route("/faq", get(Self::faq))
@@ -159,6 +167,7 @@ impl Server {
         .route("/shibescription/:inscription_id", get(Self::inscription))
         .route("/shibescriptions", get(Self::inscriptions))
         .route("/shibescriptions/:from", get(Self::inscriptions_from))
+        .route("/shibescriptions_on_outputs", get(Self::inscriptions_by_outputs))
         .route("/install.sh", get(Self::install_script))
         .route("/ordinal/:sat", get(Self::ordinal))
         .route("/output/:output", get(Self::output))
@@ -468,91 +477,229 @@ impl Server {
   }
 
   async fn block(
-      Extension(page_config): Extension<Arc<PageConfig>>,
-      Extension(index): Extension<Arc<Index>>,
-      Path(DeserializeFromStr(query)): Path<DeserializeFromStr<BlockQuery>>,
-    ) -> ServerResult<PageHtml<BlockHtml>> {
-      let (block, height) = match query {
-        BlockQuery::Height(height) => {
-          let block = index
+    Extension(page_config): Extension<Arc<PageConfig>>,
+    Extension(index): Extension<Arc<Index>>,
+    Path(DeserializeFromStr(query)): Path<DeserializeFromStr<BlockQuery>>,
+  ) -> ServerResult<PageHtml<BlockHtml>> {
+    let (block, height) = match query {
+      BlockQuery::Height(height) => {
+        let block = index
             .get_block_by_height(height)?
             .ok_or_not_found(|| format!("block {height}"))?;
 
-          (block, height)
-        }
-        BlockQuery::Hash(hash) => {
-          let info = index
+        (block, height)
+      }
+      BlockQuery::Hash(hash) => {
+        let info = index
             .block_header_info(hash)?
             .ok_or_not_found(|| format!("block {hash}"))?;
 
-          let block = index
+        let block = index
             .get_block_by_hash(hash)?
             .ok_or_not_found(|| format!("block {hash}"))?;
 
-          (block, info.height as u64)
-        }
-      };
+        (block, info.height as u64)
+      }
+    };
 
-      // Prepare the inputs_per_tx map
-      let inputs_per_tx = block.txdata.iter()
+    // Prepare the inputs_per_tx map
+    let inputs_per_tx = block.txdata.iter()
         .map(|tx| {
           let txid = tx.txid();
           let inputs = tx.input.iter()
-            .map(|input| input.previous_output.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+              .map(|input| input.previous_output.to_string())
+              .collect::<Vec<_>>()
+              .join(",");
           (txid, inputs)
         })
         .collect::<HashMap<_, _>>();
 
-      // Prepare the outputs_per_tx map
-      let outputs_per_tx = block.txdata.iter()
+    // Prepare the outputs_per_tx map
+    let outputs_per_tx = block.txdata.iter()
         .map(|tx| {
           let txid = tx.txid();
           let outputs = tx.output.iter()
-            .enumerate()  // Enumerate the iterator to get the index of each output
-            .map(|(vout, _output)| {
-              let outpoint = OutPoint::new(txid, vout as u32);  // Create the OutPoint from txid and vout
-              outpoint.to_string()  // Convert the OutPoint to a string
-            })
-            .collect::<Vec<_>>()
-            .join(",");
+              .enumerate()  // Enumerate the iterator to get the index of each output
+              .map(|(vout, _output)| {
+                let outpoint = OutPoint::new(txid, vout as u32);  // Create the OutPoint from txid and vout
+                outpoint.to_string()  // Convert the OutPoint to a string
+              })
+              .collect::<Vec<_>>()
+              .join(",");
           (txid, outputs)
         })
         .collect::<HashMap<_, _>>();
 
+    // Prepare the output values per tx
+    let output_values_per_tx = block.txdata.iter()
+        .map(|tx| {
+          let txid = tx.txid();
+          let output_values = tx.output.iter()
+              .map(|output| output.value.to_string())
+              .collect::<Vec<_>>()
+              .join(",");
+          (txid, output_values)
+        })
+        .collect::<HashMap<_, _>>();
+
+    let output_addresses_per_tx: HashMap<_, _> = block.txdata.iter()
+        .map(|tx| {
+          let txid = tx.txid();
+          let addresses = tx.output.iter()
+              .map(|output| page_config.chain.address_from_script(&output.script_pubkey)
+                  .map(|address| address.to_string())
+                  .unwrap_or_else(|_| String::new()))
+              .collect::<Vec<_>>()
+              .join(",");
+          (txid, addresses)
+        })
+        .collect();
+
+    let inscriptions_per_tx: HashMap<_, _> = block.txdata.iter()
+        .filter_map(|tx| {
+          let txid = tx.txid();
+          match index.get_inscription_by_id(txid.into()) {
+            Ok(Some(inscription)) => {
+              let inscription_id = InscriptionId::from(txid);
+              let content_type = inscription.content_type().map(|s| s.to_string());  // Convert content type to Option<String>
+              let content = inscription.into_body();
+              Some((txid, (inscription_id, content_type, content)))
+            }
+            _ => None,
+          }
+        })
+        .collect();
+
+    Ok(
+      BlockHtml::new(block, Height(height), Self::index_height(&index)?, inputs_per_tx,  outputs_per_tx, output_values_per_tx, inscriptions_per_tx, output_addresses_per_tx)
+          .page(page_config, index.has_sat_index()?),
+    )
+  }
+
+  async fn blocks(
+    Extension(page_config): Extension<Arc<PageConfig>>,
+    Extension(index): Extension<Arc<Index>>,
+    Path(path): Path<(u64, u64)>
+  ) -> Result<String, ServerError> {
+    let (height, endheight) = path;
+    let mut blocks = vec![];
+    for height in height..endheight {
+      let block = index
+          .get_block_by_height(height)?
+          .ok_or_not_found(|| format!("block {}", height))?;
+
+      let txids = block.txdata.iter()
+          .map(|tx| tx.txid().to_string())
+          .collect::<Vec<_>>()
+          .join(",");
+
+      // Prepare the inputs_per_tx map
+      let inputs_per_tx = block.txdata.iter()
+          .map(|tx| {
+            let txid = tx.txid();
+            let inputs = tx.input.iter()
+                .map(|input| input.previous_output.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            (txid, inputs)
+          })
+          .collect::<HashMap<_, _>>();
+
+      // Prepare the outputs_per_tx map
+      let outputs_per_tx = block.txdata.iter()
+          .map(|tx| {
+            let txid = tx.txid();
+            let outputs = tx.output.iter()
+                .enumerate()  // Enumerate the iterator to get the index of each output
+                .map(|(vout, _output)| {
+                  let outpoint = OutPoint::new(txid, vout as u32);  // Create the OutPoint from txid and vout
+                  outpoint.to_string()  // Convert the OutPoint to a string
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            (txid, outputs)
+          })
+          .collect::<HashMap<_, _>>();
+
+      // Prepare the output values per tx
+      let output_values_per_tx = block.txdata.iter()
+          .map(|tx| {
+            let txid = tx.txid();
+            let output_values = tx.output.iter()
+                .map(|output| output.value.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            (txid, output_values)
+          })
+          .collect::<HashMap<_, _>>();
+
       let output_addresses_per_tx: HashMap<_, _> = block.txdata.iter()
           .map(|tx| {
-              let txid = tx.txid();
-              let addresses = tx.output.iter()
-                  .filter_map(|output| page_config.chain.address_from_script(&output.script_pubkey).ok())
-                  .map(|address| address.to_string())
-                  .collect::<Vec<_>>()
-                  .join(",");
-              (txid, addresses)
+            let txid = tx.txid();
+            let addresses = tx.output.iter()
+                .map(|output| page_config.chain.address_from_script(&output.script_pubkey)
+                    .map(|address| address.to_string())
+                    .unwrap_or_else(|_| String::new()))
+                .collect::<Vec<_>>()
+                .join(",");
+            (txid, addresses)
+          })
+          .collect();
+
+      let output_scripts_per_tx: HashMap<_, _> = block.txdata.iter()
+          .map(|tx| {
+            let txid = tx.txid();
+            let scripts = tx.output.iter()
+                .map(|output| {
+                  // Convert the byte array to a hexadecimal string.
+                  // If the byte array is empty, this will result in an empty string.
+                  hex::encode(&output.script_pubkey)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            (txid, scripts)
           })
           .collect();
 
       let inscriptions_per_tx: HashMap<_, _> = block.txdata.iter()
           .filter_map(|tx| {
-              let txid = tx.txid();
-              match index.get_inscription_by_id(txid.into()) {
-                  Ok(Some(inscription)) => {
-                      let inscription_id = InscriptionId::from(txid);
-                      let content_type = inscription.content_type().map(|s| s.to_string());  // Convert content type to Option<String>
-                      let content = inscription.into_body();
-                      Some((txid, (inscription_id, content_type, content)))
+            let txid = tx.txid();
+            match index.get_inscription_by_id(txid.into()) {
+              Ok(Some(inscription)) => {
+                let inscription_id = InscriptionId::from(txid);
+                let content_type = inscription.content_type().map(|s| s.to_string());  // Convert content type to Option<String>
+
+                // Check if content_type starts with "image" or "video"
+                let content = if let Some(ref ct) = content_type {
+                  if ct.starts_with("image") || ct.starts_with("video") {
+                    // If it's an image or video, set content to None
+                    None
+                  } else {
+                    // Otherwise, use the actual content
+                    inscription.into_body()
                   }
-                  _ => None,
+                } else {
+                  // If there's no content type, use the actual content
+                  inscription.into_body()
+                };
+
+                Some((txid, (inscription_id, content_type, content)))
               }
+              _ => None,
+            }
           })
           .collect();
 
-      Ok(
-        BlockHtml::new(block, Height(height), Self::index_height(&index)?, inputs_per_tx, outputs_per_tx, inscriptions_per_tx, output_addresses_per_tx)
-          .page(page_config, index.has_sat_index()?),
-      )
+      blocks.push(
+        BlockJson::new(block, Height(height).0, txids, inputs_per_tx,  outputs_per_tx, output_values_per_tx, inscriptions_per_tx, output_addresses_per_tx, output_scripts_per_tx)
+      );
     }
+
+    // This will convert the Vec<BlocksJson> into a JSON string
+    let blocks_json = to_string(&blocks).context("Failed to serialize blocks")?;
+
+    Ok(blocks_json)
+  }
 
   async fn transaction(
     Extension(page_config): Extension<Arc<PageConfig>>,
@@ -918,6 +1065,65 @@ impl Server {
     Extension(index): Extension<Arc<Index>>,
   ) -> ServerResult<PageHtml<InscriptionsHtml>> {
     Self::inscriptions_inner(page_config, index, None).await
+  }
+
+  async fn inscriptions_by_outputs(
+    Extension(server_config): Extension<Arc<PageConfig>>,
+    Extension(index): Extension<Arc<Index>>,
+    Query(query): Query<InscriptionsByOutputsQuery>,
+  ) -> ServerResult<Response> {
+    let mut all_inscription_jsons = Vec::new();
+
+    // Split the outputs string into individual outputs
+    let outputs = query.outputs.split(',');
+
+    for output in outputs {
+      // Split the output into tx_id and vout
+      let parts: Vec<&str> = output.split(':').collect();
+      if parts.len() != 2 {
+        return Err(
+          ServerError::BadRequest("wrong output format".to_string())
+        );
+      }
+
+      let tx_id = Txid::from_str(parts[0]).map_err(
+        |_| ServerError::BadRequest("wrong tx id format".to_string()))?;
+      let vout = parts[1].parse::<u32>().map_err(
+        |_| ServerError::BadRequest("wrong vout format".to_string()))?;
+
+      // Create OutPoint
+      let outpoint = OutPoint::new(tx_id, vout);
+
+      // Query the index for inscriptions on this OutPoint
+      let inscriptions = index
+          .get_inscriptions_on_output(outpoint)?;
+
+      for inscription_id in inscriptions {
+        let inscription = index
+            .get_inscription_by_id(inscription_id)?
+            .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+        let entry = index
+            .get_inscription_entry(inscription_id)?
+            .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+        let inscription_json = InscriptionJson {
+          content_length: inscription.content_length(),
+          content_type: inscription.content_type().map(|s| s.to_string()),
+          genesis_height: entry.height,
+          inscription_id: inscription_id,
+          inscription_number: entry.number,
+          timestamp: entry.timestamp,
+          tx_id: tx_id.to_string(),
+          vout
+        };
+
+        all_inscription_jsons.push(inscription_json);
+      }
+    }
+
+    // Build your response
+    Ok(Json(all_inscription_jsons).into_response())
   }
 
   async fn inscriptions_from(
