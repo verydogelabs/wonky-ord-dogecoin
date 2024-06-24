@@ -8,11 +8,14 @@ use {
 };
 
 const PROTOCOL_ID: &[u8] = b"ord";
+const DELEGATE_OP_PUSH: &[u8] = &(11u8).to_le_bytes();
+const DELEGATE_DATA_LENGTH: usize = 5;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Inscription {
-  body: Option<Vec<u8>>,
-  content_type: Option<Vec<u8>>,
+  pub(crate) body: Option<Vec<u8>>,
+  pub(crate) content_type: Option<Vec<u8>>,
+  delegate: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -25,7 +28,7 @@ pub(crate) enum ParsedInscription {
 impl Inscription {
   #[cfg(test)]
   pub(crate) fn new(content_type: Option<Vec<u8>>, body: Option<Vec<u8>>) -> Self {
-    Self { content_type, body }
+    Self { content_type, body, delegate: None }
   }
 
   pub(crate) fn from_transactions(txs: Vec<Transaction>) -> ParsedInscription {
@@ -56,6 +59,7 @@ impl Inscription {
     Ok(Self {
       body: Some(body),
       content_type: Some(content_type.into()),
+      delegate: None,
     })
   }
 
@@ -107,6 +111,45 @@ impl Inscription {
     Some(self.body()?.len())
   }
 
+  fn inscription_id_field(field: Option<&[u8]>) -> Option<InscriptionId> {
+    let value = field.as_ref()?;
+
+    if value.len() < Txid::LEN {
+      return None;
+    }
+
+    if value.len() > Txid::LEN + 4 {
+      return None;
+    }
+
+    let (txid, index) = value.split_at(Txid::LEN);
+
+    if let Some(last) = index.last() {
+      // Accept fixed length encoding with 4 bytes (with potential trailing zeroes)
+      // or variable length (no trailing zeroes)
+      if index.len() != 4 && *last == 0 {
+        return None;
+      }
+    }
+
+    let txid = Txid::from_slice(txid).unwrap();
+
+    let index = [
+      index.first().copied().unwrap_or(0),
+      index.get(1).copied().unwrap_or(0),
+      index.get(2).copied().unwrap_or(0),
+      index.get(3).copied().unwrap_or(0),
+    ];
+
+    let index = u32::from_le_bytes(index);
+
+    Some(InscriptionId { txid, index })
+  }
+
+  pub(crate) fn delegate(&self) -> Option<InscriptionId> {
+    Self::inscription_id_field(self.delegate.as_deref())
+  }
+
   pub(crate) fn content_type(&self) -> Option<&str> {
     str::from_utf8(self.content_type.as_ref()?).ok()
   }
@@ -151,6 +194,30 @@ impl InscriptionParser {
       return ParsedInscription::None;
     }
 
+    let delegate_op_push = &push_datas[1];
+
+    let delegate = if delegate_op_push == DELEGATE_OP_PUSH
+        && push_datas.len() == DELEGATE_DATA_LENGTH {
+      let inscription_id = push_datas[2].clone();
+      if (Txid::LEN..=Txid::LEN + 4).contains(&inscription_id.len()) &&
+          InscriptionId::try_from(&inscription_id).is_ok() {
+        Some(inscription_id)
+      } else {
+        None
+      }
+    } else {
+      None
+    };
+
+    if delegate.is_some() {
+      println!("delegation successful");
+      return ParsedInscription::Complete(Inscription {
+        body: None,
+        content_type: None,
+        delegate,
+      });
+    }
+
     // read npieces
 
     let mut npieces = match Self::push_data_to_number(&push_datas[1]) {
@@ -182,6 +249,7 @@ impl InscriptionParser {
           let inscription = Inscription {
             content_type: Some(content_type),
             body: Some(body),
+            delegate: None,
           };
 
           return ParsedInscription::Complete(inscription);
