@@ -8,8 +8,6 @@ use {
 };
 
 const PROTOCOL_ID: &[u8] = b"ord";
-const DELEGATE_OP_PUSH: &[u8] = &(11u8).to_le_bytes();
-const DELEGATE_DATA_LENGTH: usize = 5;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Inscription {
@@ -194,30 +192,6 @@ impl InscriptionParser {
       return ParsedInscription::None;
     }
 
-    let delegate_op_push = &push_datas[1];
-
-    let delegate = if delegate_op_push == DELEGATE_OP_PUSH
-        && push_datas.len() == DELEGATE_DATA_LENGTH {
-      let inscription_id = push_datas[2].clone();
-      if (Txid::LEN..=Txid::LEN + 4).contains(&inscription_id.len()) &&
-          InscriptionId::try_from(&inscription_id).is_ok() {
-        Some(inscription_id)
-      } else {
-        None
-      }
-    } else {
-      None
-    };
-
-    if delegate.is_some() {
-      println!("delegation successful");
-      return ParsedInscription::Complete(Inscription {
-        body: None,
-        content_type: None,
-        delegate,
-      });
-    }
-
     // read npieces
 
     let mut npieces = match Self::push_data_to_number(&push_datas[1]) {
@@ -246,10 +220,26 @@ impl InscriptionParser {
       // loop over chunks
       loop {
         if npieces == 0 {
+          let mut fields: BTreeMap<&[u8], Vec<&[u8]>> = BTreeMap::new();
+
+          for item in push_datas.chunks(2) {
+            match item {
+              [key, value] => {
+                if key.len() != 1 {
+                  break;
+                }
+
+                fields.entry(key).or_default().push(value)
+              },
+              _ => {}
+            }
+          }
+
+          let delegate = Tag::Delegate.take(&mut fields);
           let inscription = Inscription {
             content_type: Some(content_type),
             body: Some(body),
-            delegate: None,
+            delegate,
           };
 
           return ParsedInscription::Complete(inscription);
@@ -761,6 +751,24 @@ mod tests {
     assert_eq!(
       InscriptionParser::parse(vec![Script::from(script.concat())]),
       ParsedInscription::Complete(inscription("text/plain;charset=utf-8", "woof"))
+    );
+  }
+
+  #[test]
+  fn valid_with_delegate() {
+    let mut script: Vec<&[u8]> = Vec::new();
+    script.push(&[3]);
+    script.push(b"ord");
+    script.push(&[81]);
+    script.push(&[0]);
+    script.push(&[0]);
+    script.push(&[0]);
+    script.push(&[91]);
+    script.push(&[32]);
+    script.push(&[0;32]);
+    assert_eq!(
+      InscriptionParser::parse(vec![Script::from(script.concat())]),
+      ParsedInscription::Complete(Inscription { body: Some(vec![]), content_type: Some(vec![]), delegate: Some(vec![0;32]) })
     );
   }
 

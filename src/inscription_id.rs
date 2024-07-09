@@ -91,44 +91,6 @@ impl From<Txid> for InscriptionId {
   }
 }
 
-impl TryFrom<&Vec<u8>> for InscriptionId {
-  type Error = ParseError;
-  fn try_from(bytes: &Vec<u8>) -> Result<Self, Self::Error> {
-    if bytes.len() < Txid::LEN {
-      return Err(ParseError::Length(bytes.len()));
-    }
-
-    if bytes.len() > Txid::LEN + 4 {
-      return Err(ParseError::Length(bytes.len()));
-    }
-
-    let (txid, index) = bytes.split_at(Txid::LEN);
-
-    if let Some(last) = index.last() {
-      // Accept fixed length encoding with 4 bytes (with potential trailing zeroes)
-      // or variable length (no trailing zeroes)
-      if index.len() != 4 && *last == 0 {
-        return Err(ParseError::Length(index.len()));
-      }
-    }
-
-    let txid = Txid::from_slice(txid).unwrap();
-
-    let index = [
-      index.first().copied().unwrap_or(0),
-      index.get(1).copied().unwrap_or(0),
-      index.get(2).copied().unwrap_or(0),
-      index.get(3).copied().unwrap_or(0),
-    ];
-
-    let index = u32::from_le_bytes(index);
-
-    let id = txid.to_string() + "i" + &index.to_string();
-
-    Self::from_str(id.as_str())
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
