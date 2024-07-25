@@ -24,8 +24,13 @@ pub struct OutputRare {
 }
 
 impl Sats {
-  pub(crate) fn run(&self, options: Options) -> Result {
+  pub(crate) fn run(&self, options: Options) -> SubcommandResult {
     let index = Index::open(&options)?;
+
+    if !index.has_sat_index() {
+      bail!("sats requires index created with `--index-sats` flag");
+    }
+
     index.update()?;
 
     let utxos = index.get_unspent_output_ranges(Wallet::load(&options)?)?;
@@ -42,7 +47,7 @@ impl Sats {
           output: outpoint,
         });
       }
-      print_json(output)?;
+      Ok(Box::new(output))
     } else {
       let mut output = Vec::new();
       for (outpoint, sat, offset, rarity) in rare_sats(utxos) {
@@ -53,14 +58,12 @@ impl Sats {
           rarity,
         });
       }
-      print_json(output)?;
+      Ok(Box::new(output))
     }
-
-    Ok(())
   }
 }
 
-fn rare_sats(utxos: Vec<(OutPoint, Vec<(u128, u128)>)>) -> Vec<(OutPoint, Sat, u64, Rarity)> {
+fn rare_sats(utxos: Vec<(OutPoint, Vec<(u64, u64)>)>) -> Vec<(OutPoint, Sat, u64, Rarity)> {
   utxos
     .into_iter()
     .flat_map(|(outpoint, sat_ranges)| {
@@ -81,7 +84,7 @@ fn rare_sats(utxos: Vec<(OutPoint, Vec<(u128, u128)>)>) -> Vec<(OutPoint, Sat, u
 }
 
 fn sats_from_tsv(
-  utxos: Vec<(OutPoint, Vec<(u128, u128)>)>,
+  utxos: Vec<(OutPoint, Vec<(u64, u64)>)>,
   tsv: &str,
 ) -> Result<Vec<(OutPoint, &str)>> {
   let mut needles = Vec::new();
@@ -110,7 +113,7 @@ fn sats_from_tsv(
         .into_iter()
         .map(move |(start, end)| (start, end, outpoint))
     })
-    .collect::<Vec<(u128, u128, OutPoint)>>();
+    .collect::<Vec<(u64, u64, OutPoint)>>();
   haystacks.sort();
 
   let mut i = 0;

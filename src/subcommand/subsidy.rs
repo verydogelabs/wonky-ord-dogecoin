@@ -8,12 +8,12 @@ pub(crate) struct Subsidy {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Output {
-  pub first: u128,
+  pub first: u64,
   pub subsidy: u64,
 }
 
 impl Subsidy {
-  pub(crate) fn run(self) -> Result {
+  pub(crate) fn run(self) -> SubcommandResult {
     let first = self.height.starting_sat();
 
     let subsidy = self.height.subsidy();
@@ -22,11 +22,6 @@ impl Subsidy {
       bail!("block {} has no subsidy", self.height);
     }
 
-    print_json(Output {
-      first: first.0,
-      subsidy,
-    })?;
-
-    Ok(())
+    Ok(Box::new(Output { first: first.0, subsidy }))
   }
 }

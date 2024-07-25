@@ -8,14 +8,14 @@ pub(crate) struct Info {
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionsOutput {
-  pub start: u64,
-  pub end: u64,
-  pub count: u64,
+  pub start: u32,
+  pub end: u32,
+  pub count: u32,
   pub elapsed: f64,
 }
 
 impl Info {
-  pub(crate) fn run(self, options: Options) -> Result {
+  pub(crate) fn run(self, options: Options) -> SubcommandResult {
     let index = Index::open(&options)?;
     index.update()?;
     let info = index.info()?;
@@ -32,11 +32,9 @@ impl Info {
           elapsed: (end.starting_timestamp - start.starting_timestamp) as f64 / 1000.0 / 60.0,
         });
       }
-      print_json(output)?;
+      Ok(Box::new(output))
     } else {
-      print_json(info)?;
+      Ok(Box::new(info))
     }
-
-    Ok(())
   }
 }

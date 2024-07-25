@@ -3,7 +3,20 @@ use super::*;
 #[derive(Boilerplate)]
 pub(crate) struct TransactionHtml {
   blockhash: Option<BlockHash>,
+  confirmations: Option<u32>,
   chain: Chain,
+  etching: Option<SpacedDune>,
+  inscription: Option<InscriptionId>,
+  transaction: Transaction,
+  txid: Txid,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct TransactionJson {
+  blockhash: Option<BlockHash>,
+  confirmations: Option<u32>,
+  chain: Chain,
+  etching: Option<SpacedDune>,
   inscription: Option<InscriptionId>,
   transaction: Transaction,
   txid: Txid,
@@ -13,15 +26,31 @@ impl TransactionHtml {
   pub(crate) fn new(
     transaction: Transaction,
     blockhash: Option<BlockHash>,
+    confirmations: Option<u32>,
     inscription: Option<InscriptionId>,
     chain: Chain,
+    etching: Option<SpacedDune>,
   ) -> Self {
     Self {
       txid: transaction.txid(),
       blockhash,
+      confirmations,
       chain,
+      etching,
       inscription,
       transaction,
+    }
+  }
+
+  pub(crate) fn to_json(&self) -> TransactionJson {
+    TransactionJson {
+      blockhash: self.blockhash.clone(),
+      confirmations: self.confirmations,
+      chain: self.chain.clone(),
+      etching: self.etching.clone(),
+      inscription: self.inscription.clone(),
+      transaction: self.transaction.clone(),
+      txid: self.txid.clone(),
     }
   }
 }

@@ -8,6 +8,19 @@
 
 We included the real wonky block rewards from block 0 until block 144,999. We invite you to critically review our code in `src/epoch.rs`. We are convinced that doginals should use actual block rewards instead of a simplified version.
 
+```
+Start Indexing
+ord --rpc-url=YOUR_RPC_URL --data-dir=/root/.data --nr-parallel-requests=16 --first-inscription-height=4609723 --first-dune-height=5084000 --index-dunes --index-transactions --index-drc20 index
+
+Start Indexing + Server
+ord --rpc-url=YOUR_RPC_URL --data-dir=/root/.data --nr-parallel-requests=16 --first-inscription-height=4609723 --first-dune-height=5084000 --index-dunes --index-transactions --index-drc20 server
+
+--index-transactions will store transaction data, this is currently needed for --index-drc20 and furthermore helps for a better performance for the API.
+--nr-parallel-requests will configure how many parallel requests while indexing are sent to your RPC Server - 16 is recommended for default node settings.
+
+With all settings enabled, the database will currently need around 400gb when fully indexed.
+```
+
 ## Required env vars
 
 On the root level of this repo you'll find a `subsidies.json` and `starting_sats.json` file. When starting ord you will need to set the location of these files to env variables. Example: 

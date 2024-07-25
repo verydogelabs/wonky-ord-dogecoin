@@ -8,12 +8,18 @@ pub(crate) enum Blocktime {
 
 impl Blocktime {
   pub(crate) fn confirmed(seconds: u32) -> Self {
-    Self::Confirmed(timestamp(seconds))
+    Self::Confirmed(timestamp(seconds.into()))
   }
 
   pub(crate) fn timestamp(self) -> DateTime<Utc> {
     match self {
       Self::Confirmed(timestamp) | Self::Expected(timestamp) => timestamp,
+    }
+  }
+
+  pub(crate) fn unix_timestamp(self) -> i64 {
+    match self {
+      Self::Confirmed(timestamp) | Self::Expected(timestamp) => timestamp.timestamp(),
     }
   }
 

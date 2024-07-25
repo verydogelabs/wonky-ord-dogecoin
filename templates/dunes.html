@@ -1,0 +1,6 @@
+<h1>Dunes</h1>
+<ul>
+%% for (id, entry) in &self.entries {
+  <li><a href=/dune/{{ entry.spaced_dune() }}>{{ entry.spaced_dune() }}</a></li>
+%% }
+</ul>

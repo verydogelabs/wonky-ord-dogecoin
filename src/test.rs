@@ -2,6 +2,7 @@ pub(crate) use {
   super::*, bitcoin::Witness, pretty_assertions::assert_eq as pretty_assert_eq, std::iter,
   test_bitcoincore_rpc::TransactionTemplate, unindent::Unindent,
 };
+use crate::sat_point::SatPoint;
 
 macro_rules! assert_regex_match {
   ($value:expr, $pattern:expr $(,)?) => {

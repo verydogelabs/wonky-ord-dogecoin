@@ -7,14 +7,15 @@ use std::path::Path;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
+use crate::sat::Sat;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Display, PartialOrd)]
-pub(crate) struct Epoch(pub(crate) u64);
+pub(crate) struct Epoch(pub(crate) u32);
 
 fn read_sat_from_file<P: AsRef<Path>>(path: P) -> Result<Vec<Sat>, Box<dyn std::error::Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let sats: Vec<u128> = serde_json::from_reader(reader)?;
+    let sats: Vec<u64> = serde_json::from_reader(reader)?;
 
     Ok(sats.into_iter().map(Sat).collect())
 }
@@ -28,7 +29,7 @@ lazy_static! {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Epochs {
-    epochs: HashMap<u64, u64>,
+    epochs: HashMap<u32, u64>,
 }
 
 static EPOCHS: Lazy<Epochs> = Lazy::new(|| {
@@ -76,8 +77,8 @@ impl Epoch {
   }
 }
 
-impl PartialEq<u64> for Epoch {
-  fn eq(&self, other: &u64) -> bool {
+impl PartialEq<u32> for Epoch {
+  fn eq(&self, other: &u32) -> bool {
     self.0 == *other
   }
 }
@@ -89,7 +90,7 @@ impl From<Sat> for Epoch {
     let len = starting_sats.len();
     for i in 0..len-1 {
       if sat < starting_sats[i+1] {
-        return Epoch(i as u64);
+        return Epoch(i as u32);
       }
     }
 

@@ -8,25 +8,22 @@ pub(crate) struct Traits {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Output {
-  pub number: u128,
+  pub number: u64,
   pub decimal: String,
-  pub height: u64,
-  pub epoch: u64,
+  pub height: u32,
+  pub epoch: u32,
   pub offset: u64,
   pub rarity: Rarity,
 }
 
 impl Traits {
-  pub(crate) fn run(self) -> Result {
-    print_json(Output {
+  pub(crate) fn run(self) -> SubcommandResult {
+    Ok(Box::new( Output {
       number: self.sat.n(),
       decimal: self.sat.decimal().to_string(),
       height: self.sat.height().0,
       epoch: self.sat.epoch().0,
       offset: self.sat.third(),
-      rarity: self.sat.rarity(),
-    })?;
-
-    Ok(())
+      rarity: self.sat.rarity()}))
   }
 }

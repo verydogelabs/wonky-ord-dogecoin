@@ -1,17 +1,18 @@
+use crate::decimal_sat::DecimalSat;
 use super::*;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Display, Ord, PartialOrd, Deserialize, Serialize)]
 #[serde(transparent)]
-pub struct Sat(pub u128);
+pub struct Sat(pub u64);
 
 impl Sat {
-  pub(crate) fn n(self) -> u128 {
+  pub(crate) fn n(self) -> u64 {
     self.0
   }
 
   pub(crate) fn height(self) -> Height {
     self.epoch().starting_height()
-      + u64::try_from(self.epoch_position() / self.epoch().subsidy() as u128).unwrap()
+        + u32::try_from(self.epoch_position() / self.epoch().subsidy()).unwrap()
   }
 
   pub(crate) fn epoch(self) -> Epoch {
@@ -19,14 +20,14 @@ impl Sat {
   }
 
   pub(crate) fn third(self) -> u64 {
-    u64::try_from(self.epoch_position() % self.epoch().subsidy() as u128).unwrap()
+    u64::try_from(self.epoch_position() % self.epoch().subsidy()).unwrap()
   }
 
-  pub(crate) fn epoch_position(self) -> u128 {
+  pub(crate) fn epoch_position(self) -> u64 {
     self.0 - self.epoch().starting_sat().0
   }
 
-  pub(crate) fn decimal(self) -> Decimal {
+  pub(crate) fn decimal(self) -> DecimalSat {
     self.into()
   }
 
@@ -36,7 +37,7 @@ impl Sat {
 
   pub(crate) fn is_common(self) -> bool {
     let epoch = self.epoch();
-    (self.0 - epoch.starting_sat().0) % epoch.subsidy() as u128 != 0
+    (self.0 - epoch.starting_sat().0) % epoch.subsidy() != 0
   }
 
   fn from_decimal(decimal: &str) -> Result<Self> {
@@ -50,32 +51,32 @@ impl Sat {
       bail!("invalid block offset");
     }
 
-    Ok(height.starting_sat() + offset as u128)
+    Ok(height.starting_sat() + offset)
   }
 }
 
-impl PartialEq<u128> for Sat {
-  fn eq(&self, other: &u128) -> bool {
+impl PartialEq<u64> for Sat {
+  fn eq(&self, other: &u64) -> bool {
     self.0 == *other
   }
 }
 
-impl PartialOrd<u128> for Sat {
-  fn partial_cmp(&self, other: &u128) -> Option<cmp::Ordering> {
+impl PartialOrd<u64> for Sat {
+  fn partial_cmp(&self, other: &u64) -> Option<cmp::Ordering> {
     self.0.partial_cmp(other)
   }
 }
 
-impl Add<u128> for Sat {
+impl Add<u64> for Sat {
   type Output = Self;
 
-  fn add(self, other: u128) -> Sat {
+  fn add(self, other: u64) -> Sat {
     Sat(self.0 + other)
   }
 }
 
-impl AddAssign<u128> for Sat {
-  fn add_assign(&mut self, other: u128) {
+impl AddAssign<u64> for Sat {
+  fn add_assign(&mut self, other: u64) {
     *self = Sat(self.0 + other);
   }
 }
@@ -107,8 +108,8 @@ mod tests {
   fn height() {
     assert_eq!(Sat(0).height(), 0);
     assert_eq!(Sat(1).height(), 0);
-    assert_eq!(Sat(Epoch(0).subsidy() as u128).height(), 1);
-    assert_eq!(Sat(Epoch(0).subsidy() as u128 * 2).height(), 2);
+    assert_eq!(Sat(Epoch(0).subsidy()).height(), 1);
+    assert_eq!(Sat(Epoch(0).subsidy() * 2).height(), 2);
   }
 
   #[test]

@@ -36,10 +36,13 @@ use {
   super::*,
   bitcoin::{
     blockdata::{locktime::PackedLockTime, witness::Witness},
-    util::amount::Amount,
+    Amount
   },
-  std::collections::{BTreeMap, BTreeSet},
+  std::{
+    collections::{BTreeMap, BTreeSet},
+  },
 };
+use crate::sat_point::SatPoint;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -60,7 +63,7 @@ pub enum Error {
 }
 
 #[derive(Debug, PartialEq)]
-enum Target {
+pub enum Target {
   Value(Amount),
   Postage,
 }
@@ -104,6 +107,7 @@ pub struct TransactionBuilder {
   outgoing: SatPoint,
   outputs: Vec<(Address, Amount)>,
   recipient: Address,
+  dunic_utxos: BTreeSet<OutPoint>,
   unused_change_addresses: Vec<Address>,
   utxos: BTreeSet<OutPoint>,
   target: Target,
@@ -122,6 +126,7 @@ impl TransactionBuilder {
     outgoing: SatPoint,
     inscriptions: BTreeMap<SatPoint, InscriptionId>,
     amounts: BTreeMap<OutPoint, Amount>,
+    dunic_utxos: BTreeSet<OutPoint>,
     recipient: Address,
     change: [Address; 2],
     fee_rate: FeeRate,
@@ -130,6 +135,7 @@ impl TransactionBuilder {
       outgoing,
       inscriptions,
       amounts,
+      dunic_utxos,
       recipient,
       change,
       fee_rate,
@@ -143,6 +149,7 @@ impl TransactionBuilder {
     inscriptions: BTreeMap<SatPoint, InscriptionId>,
     amounts: BTreeMap<OutPoint, Amount>,
     recipient: Address,
+    dunic_utxos: BTreeSet<OutPoint>,
     change: [Address; 2],
     fee_rate: FeeRate,
     output_value: Amount,
@@ -160,6 +167,7 @@ impl TransactionBuilder {
       outgoing,
       inscriptions,
       amounts,
+      dunic_utxos,
       recipient,
       change,
       fee_rate,
@@ -168,7 +176,7 @@ impl TransactionBuilder {
     .build_transaction()
   }
 
-  fn build_transaction(self) -> Result<Transaction> {
+  pub fn build_transaction(self) -> Result<Transaction> {
     self
       .select_outgoing()?
       .align_outgoing()
@@ -179,10 +187,11 @@ impl TransactionBuilder {
       .build()
   }
 
-  fn new(
+  pub fn new(
     outgoing: SatPoint,
     inscriptions: BTreeMap<SatPoint, InscriptionId>,
     amounts: BTreeMap<OutPoint, Amount>,
+    dunic_utxos: BTreeSet<OutPoint>,
     recipient: Address,
     change: [Address; 2],
     fee_rate: FeeRate,
@@ -205,6 +214,7 @@ impl TransactionBuilder {
       inscriptions,
       outgoing,
       outputs: Vec::new(),
+      dunic_utxos,
       recipient,
       unused_change_addresses: change.to_vec(),
       target,
@@ -432,7 +442,7 @@ impl TransactionBuilder {
           previous_output: OutPoint::null(),
           script_sig: Script::new(),
           sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
-          witness: Witness::from_vec(vec![vec![0; TransactionBuilder::SCHNORR_SIGNATURE_SIZE]]),
+          witness: Witness::from_vec([[0; Self::SCHNORR_SIGNATURE_SIZE].to_vec()].to_vec()),
         })
         .collect(),
       output: outputs
@@ -641,8 +651,11 @@ impl TransactionBuilder {
       .map(|satpoint| satpoint.outpoint)
       .collect::<BTreeSet<OutPoint>>();
 
+    let dunic_utxos = self.dunic_utxos.clone();
+
     for utxo in &self.utxos {
-      if inscribed_utxos.contains(utxo) {
+      if inscribed_utxos.contains(utxo) ||
+          dunic_utxos.contains(utxo) {
         continue;
       }
 
@@ -664,6 +677,7 @@ impl TransactionBuilder {
 
 #[cfg(test)]
 mod tests {
+  use bitcoin::blockdata::constants::COIN_VALUE;
   use {super::Error, super::*};
 
   #[test]

@@ -8,6 +8,23 @@
 %% }
   </dd>
 %% }
+%% if !self.dunes.is_empty() {
+  <dt>dunes</dt>
+  <dd>
+    <table>
+      <tr>
+        <th>dune</th>
+        <th>balance</th>
+      </tr>
+      %% for (dune, balance) in &self.dunes {
+      <tr>
+        <td><a href=/dune/{{ dune }}>{{ dune }}</a></td>
+        <td>{{ balance }}</td>
+      </tr>
+      %% }
+    </table>
+  </dd>
+%% }
   <dt>value</dt><dd>{{ self.output.value }}</dd>
   <dt>script pubkey</dt><dd class=monospace>{{ self.output.script_pubkey.asm() }}</dd>
 %% if let Ok(address) = self.chain.address_from_script(&self.output.script_pubkey ) {
