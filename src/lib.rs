@@ -22,6 +22,7 @@ use {
     index::{Index, List},
     inscription::Inscription,
     inscription_id::InscriptionId,
+    tag::Tag,
     media::Media,
     options::Options,
     outgoing::Outgoing,
@@ -104,6 +105,7 @@ mod height;
 mod index;
 mod inscription;
 mod inscription_id;
+mod tag;
 mod media;
 mod object;
 mod options;

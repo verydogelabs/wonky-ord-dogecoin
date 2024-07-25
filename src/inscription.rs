@@ -11,8 +11,9 @@ const PROTOCOL_ID: &[u8] = b"ord";
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Inscription {
-  body: Option<Vec<u8>>,
-  content_type: Option<Vec<u8>>,
+  pub(crate) body: Option<Vec<u8>>,
+  pub(crate) content_type: Option<Vec<u8>>,
+  delegate: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -25,7 +26,7 @@ pub(crate) enum ParsedInscription {
 impl Inscription {
   #[cfg(test)]
   pub(crate) fn new(content_type: Option<Vec<u8>>, body: Option<Vec<u8>>) -> Self {
-    Self { content_type, body }
+    Self { content_type, body, delegate: None }
   }
 
   pub(crate) fn from_transactions(txs: Vec<Transaction>) -> ParsedInscription {
@@ -56,6 +57,7 @@ impl Inscription {
     Ok(Self {
       body: Some(body),
       content_type: Some(content_type.into()),
+      delegate: None,
     })
   }
 
@@ -105,6 +107,45 @@ impl Inscription {
 
   pub(crate) fn content_length(&self) -> Option<usize> {
     Some(self.body()?.len())
+  }
+
+  fn inscription_id_field(field: Option<&[u8]>) -> Option<InscriptionId> {
+    let value = field.as_ref()?;
+
+    if value.len() < Txid::LEN {
+      return None;
+    }
+
+    if value.len() > Txid::LEN + 4 {
+      return None;
+    }
+
+    let (txid, index) = value.split_at(Txid::LEN);
+
+    if let Some(last) = index.last() {
+      // Accept fixed length encoding with 4 bytes (with potential trailing zeroes)
+      // or variable length (no trailing zeroes)
+      if index.len() != 4 && *last == 0 {
+        return None;
+      }
+    }
+
+    let txid = Txid::from_slice(txid).unwrap();
+
+    let index = [
+      index.first().copied().unwrap_or(0),
+      index.get(1).copied().unwrap_or(0),
+      index.get(2).copied().unwrap_or(0),
+      index.get(3).copied().unwrap_or(0),
+    ];
+
+    let index = u32::from_le_bytes(index);
+
+    Some(InscriptionId { txid, index })
+  }
+
+  pub(crate) fn delegate(&self) -> Option<InscriptionId> {
+    Self::inscription_id_field(self.delegate.as_deref())
   }
 
   pub(crate) fn content_type(&self) -> Option<&str> {
@@ -179,9 +220,26 @@ impl InscriptionParser {
       // loop over chunks
       loop {
         if npieces == 0 {
+          let mut fields: BTreeMap<&[u8], Vec<&[u8]>> = BTreeMap::new();
+
+          for item in push_datas.chunks(2) {
+            match item {
+              [key, value] => {
+                if key.len() != 1 {
+                  break;
+                }
+
+                fields.entry(key).or_default().push(value)
+              },
+              _ => {}
+            }
+          }
+
+          let delegate = Tag::Delegate.take(&mut fields);
           let inscription = Inscription {
             content_type: Some(content_type),
             body: Some(body),
+            delegate,
           };
 
           return ParsedInscription::Complete(inscription);
@@ -693,6 +751,24 @@ mod tests {
     assert_eq!(
       InscriptionParser::parse(vec![Script::from(script.concat())]),
       ParsedInscription::Complete(inscription("text/plain;charset=utf-8", "woof"))
+    );
+  }
+
+  #[test]
+  fn valid_with_delegate() {
+    let mut script: Vec<&[u8]> = Vec::new();
+    script.push(&[3]);
+    script.push(b"ord");
+    script.push(&[81]);
+    script.push(&[0]);
+    script.push(&[0]);
+    script.push(&[0]);
+    script.push(&[91]);
+    script.push(&[32]);
+    script.push(&[0;32]);
+    assert_eq!(
+      InscriptionParser::parse(vec![Script::from(script.concat())]),
+      ParsedInscription::Complete(Inscription { body: Some(vec![]), content_type: Some(vec![]), delegate: Some(vec![0;32]) })
     );
   }
 
