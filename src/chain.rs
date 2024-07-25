@@ -1,3 +1,4 @@
+use bitcoin::util::address;
 use {super::*, clap::ValueEnum};
 
 #[derive(Default, ValueEnum, Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -38,9 +39,18 @@ impl Chain {
     }
   }
 
-  pub(crate) fn first_inscription_height(self) -> u64 {
+  pub(crate) fn first_inscription_height(self) -> u32 {
     match self {
       Self::Mainnet => 4600000,
+      Self::Regtest => 0,
+      Self::Signet => 0,
+      Self::Testnet => 4250000,
+    }
+  }
+
+  pub(crate) fn first_dune_height(self) -> u32 {
+    match self {
+      Self::Mainnet => 5084000,
       Self::Regtest => 0,
       Self::Signet => 0,
       Self::Testnet => 4250000,
@@ -61,7 +71,7 @@ impl Chain {
   pub(crate) fn address_from_script(
     self,
     script: &Script,
-  ) -> Result<Address, bitcoin::util::address::Error> {
+  ) -> Result<Address, address::Error> {
     Address::from_script(script, self.network())
   }
 

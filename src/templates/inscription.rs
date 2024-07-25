@@ -1,16 +1,37 @@
+use crate::sat::Sat;
+use crate::sat_point::SatPoint;
 use super::*;
 
-#[derive(Boilerplate)]
+#[derive(Boilerplate, Default)]
 pub(crate) struct InscriptionHtml {
   pub(crate) chain: Chain,
   pub(crate) genesis_fee: u64,
-  pub(crate) genesis_height: u64,
+  pub(crate) genesis_height: u32,
   pub(crate) inscription: Inscription,
   pub(crate) inscription_id: InscriptionId,
+  pub(crate) inscription_number: u64,
   pub(crate) next: Option<InscriptionId>,
-  pub(crate) number: u64,
   pub(crate) output: TxOut,
   pub(crate) previous: Option<InscriptionId>,
+  pub(crate) dune: Option<SpacedDune>,
+  pub(crate) sat: Option<Sat>,
+  pub(crate) satpoint: SatPoint,
+  pub(crate) timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ShibescriptionJson {
+  pub(crate) chain: Chain,
+  pub(crate) genesis_fee: u64,
+  pub(crate) genesis_height: u32,
+  pub(crate) inscription: Inscription,
+  pub(crate) inscription_id: InscriptionId,
+  pub(crate) inscription_number: u64,
+  pub(crate) next: Option<InscriptionId>,
+  pub(crate) output: TxOut,
+  pub(crate) address: Option<String>,
+  pub(crate) previous: Option<InscriptionId>,
+  pub(crate) dune: Option<SpacedDune>,
   pub(crate) sat: Option<Sat>,
   pub(crate) satpoint: SatPoint,
   pub(crate) timestamp: DateTime<Utc>,
@@ -20,17 +41,33 @@ pub(crate) struct InscriptionHtml {
 pub struct InscriptionJson {
   pub tx_id: String,
   pub vout: u32,
+  pub content: Option<Vec<u8>>,
   pub content_length: Option<usize>,
   pub content_type: Option<String>,
-  pub genesis_height: u64,
+  pub genesis_height: u32,
   pub inscription_id: InscriptionId,
   pub inscription_number: u64,
+  //pub dune: Option<SpacedDune>,
   pub timestamp: u32,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct InscriptionByAddressJson {
+  pub utxo: Utxo,
+  pub content: Option<String>,
+  pub content_length: Option<usize>,
+  pub content_type: Option<String>,
+  pub genesis_height: u32,
+  pub inscription_id: InscriptionId,
+  pub inscription_number: u64,
+  //pub dune: Option<SpacedDune>,
+  pub timestamp: u32,
+  pub offset: u64,
 }
 
 impl PageContent for InscriptionHtml {
   fn title(&self) -> String {
-    format!("Shibescription {}", self.number)
+    format!("Shibescription {}", self.inscription_number)
   }
 
   fn preview_image_url(&self) -> Option<Trusted<String>> {
@@ -46,18 +83,13 @@ mod tests {
   fn without_sat_or_nav_links() {
     assert_regex_match!(
       InscriptionHtml {
-        chain: Chain::Mainnet,
         genesis_fee: 1,
-        genesis_height: 0,
         inscription: inscription("text/plain;charset=utf-8", "HELLOWORLD"),
         inscription_id: inscription_id(1),
-        next: None,
-        number: 1,
+        inscription_number: 1,
         output: tx_out(1, address()),
-        previous: None,
-        sat: None,
         satpoint: satpoint(1, 0),
-        timestamp: timestamp(0),
+        ..Default::default()
       },
       "
         <h1>Shibescription 1</h1>
@@ -105,18 +137,14 @@ mod tests {
   fn with_sat() {
     assert_regex_match!(
       InscriptionHtml {
-        chain: Chain::Mainnet,
         genesis_fee: 1,
-        genesis_height: 0,
         inscription: inscription("text/plain;charset=utf-8", "HELLOWORLD"),
         inscription_id: inscription_id(1),
-        next: None,
-        number: 1,
+        inscription_number: 1,
         output: tx_out(1, address()),
-        previous: None,
         sat: Some(Sat(1)),
         satpoint: satpoint(1, 0),
-        timestamp: timestamp(0),
+        ..Default::default()
       },
       "
         <h1>Shibescription 1</h1>
@@ -137,18 +165,15 @@ mod tests {
   fn with_prev_and_next() {
     assert_regex_match!(
       InscriptionHtml {
-        chain: Chain::Mainnet,
         genesis_fee: 1,
-        genesis_height: 0,
         inscription: inscription("text/plain;charset=utf-8", "HELLOWORLD"),
         inscription_id: inscription_id(2),
         next: Some(inscription_id(3)),
-        number: 1,
+        inscription_number: 1,
         output: tx_out(1, address()),
         previous: Some(inscription_id(1)),
-        sat: None,
         satpoint: satpoint(1, 0),
-        timestamp: timestamp(0),
+        ..Default::default()
       },
       "
         <h1>Shibescription 1</h1>
@@ -158,6 +183,31 @@ mod tests {
         <a class=next href=/shibescription/3{64}i3>❯</a>
         </div>
         .*
+      "
+      .unindent()
+    );
+  }
+
+  #[test]
+  fn with_dune() {
+    assert_regex_match!(
+      InscriptionHtml {
+        genesis_fee: 1,
+        inscription: inscription("text/plain;charset=utf-8", "HELLOWORLD"),
+        inscription_id: inscription_id(1),
+        inscription_number: 1,
+        satpoint: satpoint(1, 0),
+        dune: Some(Dune(0)),
+        ..Default::default()
+      },
+      "
+        <h1>Shibescription 1</h1>
+        .*
+        <dl>
+          .*
+          <dt>dune</dt>
+          <dd><a href=/dune/A>A</a></dd>
+        </dl>
       "
       .unindent()
     );

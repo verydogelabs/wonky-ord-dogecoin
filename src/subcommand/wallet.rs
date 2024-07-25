@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use {
   super::*,
   bitcoin::secp256k1::{
@@ -16,6 +18,7 @@ use {
 
 pub mod balance;
 pub mod create;
+pub mod etch;
 pub(crate) mod inscribe;
 pub mod inscriptions;
 pub mod outputs;
@@ -32,6 +35,8 @@ pub(crate) enum Wallet {
   Balance,
   #[clap(about = "Create new wallet")]
   Create(create::Create),
+  #[clap(about = "Create dune")]
+  Etch(etch::Etch),
   #[clap(about = "Create inscription")]
   Inscribe(inscribe::Inscribe),
   #[clap(about = "List wallet inscriptions")]
@@ -51,10 +56,11 @@ pub(crate) enum Wallet {
 }
 
 impl Wallet {
-  pub(crate) fn run(self, options: Options) -> Result {
+  pub(crate) fn run(self, options: Options) -> SubcommandResult {
     match self {
       Self::Balance => balance::run(options),
       Self::Create(create) => create.run(options),
+      Self::Etch(etch) => etch.run(options),
       Self::Inscribe(inscribe) => inscribe.run(options),
       Self::Inscriptions => inscriptions::run(options),
       Self::Receive => receive::run(options),

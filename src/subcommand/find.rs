@@ -12,15 +12,18 @@ pub struct Output {
 }
 
 impl Find {
-  pub(crate) fn run(self, options: Options) -> Result {
+  pub(crate) fn run(self, options: Options) -> SubcommandResult {
     let index = Index::open(&options)?;
+
+    if !index.has_sat_index() {
+      bail!("find requires index created with `--index-sats` flag");
+    }
 
     index.update()?;
 
-    match index.find(self.sat.0)? {
+    match index.find(self.sat)? {
       Some(satpoint) => {
-        print_json(Output { satpoint })?;
-        Ok(())
+        Ok(Box::new(Output { satpoint }))
       }
       None => Err(anyhow!("sat has not been mined as of index height")),
     }

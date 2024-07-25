@@ -7,11 +7,59 @@ pub(crate) struct OutputHtml {
   pub(crate) chain: Chain,
   pub(crate) output: TxOut,
   pub(crate) inscriptions: Vec<InscriptionId>,
+  pub(crate) dunes: Vec<(SpacedDune, Pile)>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct AddressOutputJson {
+  pub(crate) outpoint: Vec<OutPoint>,
+}
+
+impl AddressOutputJson {
+  pub fn new(
+    outputs: Vec<OutPoint>,
+  ) -> Self {
+    Self {
+      outpoint: outputs
+    }
+  }
 }
 
 impl PageContent for OutputHtml {
   fn title(&self) -> String {
     format!("Output {}", self.outpoint)
+  }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct OutputJson {
+  pub address: Option<String>,
+  pub inscriptions: Vec<InscriptionId>,
+  pub dunes: Vec<(SpacedDune, Pile)>,
+  pub script_pubkey: String,
+  pub transaction: String,
+  pub value: u64,
+}
+
+impl OutputJson {
+  pub fn new(
+    chain: Chain,
+    inscriptions: Vec<InscriptionId>,
+    outpoint: OutPoint,
+    output: TxOut,
+    dunes: Vec<(SpacedDune, Pile)>,
+  ) -> Self {
+    Self {
+      address: chain
+          .address_from_script(&output.script_pubkey)
+          .ok()
+          .map(|address| address.to_string()),
+      inscriptions,
+      dunes,
+      script_pubkey: output.script_pubkey.asm(),
+      transaction: outpoint.txid.to_string(),
+      value: output.value,
+    }
   }
 }
 
@@ -34,6 +82,7 @@ mod tests {
           value: 3,
           script_pubkey: Script::new_p2pkh(&PubkeyHash::all_zeros()),
         },
+        dunes: Vec::new(),
       },
       "
         <h1>Output <span class=monospace>1{64}:1</span></h1>
@@ -65,6 +114,7 @@ mod tests {
           value: 1,
           script_pubkey: script::Builder::new().push_int(0).into_script(),
         },
+        dunes: Vec::new(),
       },
       "
         <h1>Output <span class=monospace>1{64}:1</span></h1>
@@ -91,6 +141,7 @@ mod tests {
           value: 3,
           script_pubkey: Script::new_p2pkh(&PubkeyHash::all_zeros()),
         },
+        dunes: Vec::new(),
       }
       .to_string(),
       "
@@ -118,6 +169,7 @@ mod tests {
           value: 3,
           script_pubkey: Script::new_p2pkh(&PubkeyHash::all_zeros()),
         },
+        dunes: Vec::new(),
       },
       "
         <h1>Output <span class=monospace>1{64}:1</span></h1>
@@ -125,6 +177,50 @@ mod tests {
           <dt>inscriptions</dt>
           <dd class=thumbnails>
             <a href=/shibescription/1{64}i1><iframe .* src=/preview/1{64}i1></iframe></a>
+          </dd>
+          .*
+        </dl>
+      "
+      .unindent()
+    );
+  }
+
+  #[test]
+  fn with_dunes() {
+    assert_regex_match!(
+      OutputHtml {
+        inscriptions: Vec::new(),
+        outpoint: outpoint(1),
+        list: None,
+        chain: Chain::Mainnet,
+        output: TxOut {
+          value: 3,
+          script_pubkey: Script::new_p2pkh(&PubkeyHash::all_zeros()),
+        },
+        dunes: vec![(
+          Dune(0),
+          Pile {
+            amount: 11,
+            divisibility: 1,
+            symbol: None,
+          }
+        )],
+      },
+      "
+        <h1>Output <span class=monospace>1{64}:1</span></h1>
+        <dl>
+          <dt>dunes</dt>
+          <dd>
+            <table>
+              <tr>
+                <th>dune</th>
+                <th>balance</th>
+              </tr>
+              <tr>
+                <td><a href=/dune/A>A</a></td>
+                <td>1.1</td>
+              </tr>
+            </table>
           </dd>
           .*
         </dl>

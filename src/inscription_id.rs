@@ -1,9 +1,18 @@
 use super::*;
 
-#[derive(Debug, PartialEq, Copy, Clone, Hash, Eq)]
+#[derive(Debug, PartialEq, Copy, Clone, Hash, Eq, PartialOrd, Ord)]
 pub struct InscriptionId {
   pub(crate) txid: Txid,
   pub(crate) index: u32,
+}
+
+impl Default for InscriptionId {
+  fn default() -> Self {
+    Self {
+      txid: Txid::all_zeros(),
+      index: 0,
+    }
+  }
 }
 
 impl<'de> Deserialize<'de> for InscriptionId {

@@ -1,3 +1,5 @@
+use crate::sat::Sat;
+use crate::sat_point::SatPoint;
 use super::*;
 
 #[derive(Boilerplate)]
