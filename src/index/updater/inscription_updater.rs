@@ -1,8 +1,9 @@
 use crate::drc20::operation::{Action, InscriptionOp};
-use super::*;
 use crate::inscription::ParsedInscription;
 use crate::sat::Sat;
 use crate::sat_point::SatPoint;
+
+use super::*;
 
 pub(super) struct Flotsam {
   txid: Txid,
@@ -14,10 +15,7 @@ pub(super) struct Flotsam {
 
 #[derive(Debug, Clone)]
 enum Origin {
-  New {
-    fee: u64,
-    inscription: Inscription,
-  },
+  New { fee: u64, inscription: Inscription },
   Old(SatPoint),
 }
 
@@ -72,9 +70,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     let next_number = number_to_id
       .iter()?
       .rev()
-      .map(|result| {
-        result.map(|(number, _id)| number.value() + 1)
-      })
+      .map(|result| result.map(|(number, _id)| number.value() + 1))
       .next()
       .transpose()?
       .unwrap_or(0);
@@ -116,13 +112,12 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
     if self.index_transactions {
       tx.consensus_encode(&mut self.transaction_buffer)
-          .expect("in-memory writers don't error");
+        .expect("in-memory writers don't error");
       self
-          .transaction_id_to_transaction
-          .insert(&txid.store(), self.transaction_buffer.as_slice())?;
+        .transaction_id_to_transaction
+        .insert(&txid.store(), self.transaction_buffer.as_slice())?;
 
       self.transaction_buffer.clear();
-
     }
 
     let mut input_value = 0;
@@ -156,14 +151,18 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
           .remove(&tx_in.previous_output.store())?
         {
           if let Some(transaction) = self
-              .transaction_id_to_transaction
-              .get(&tx_in.previous_output.txid.store())? {
+            .transaction_id_to_transaction
+            .get(&tx_in.previous_output.txid.store())?
+          {
             let tx: Transaction = consensus::encode::deserialize(transaction.value())?;
             let output = tx.output[tx_in.previous_output.vout as usize].clone();
-            if let Some(address_from_script) = self.chain
-                .address_from_script(&output.script_pubkey)
-                .ok() {
-              self.address_to_outpoint.remove(address_from_script.to_string().as_bytes(), &tx_in.previous_output.store())?;
+            if let Some(address_from_script) =
+              self.chain.address_from_script(&output.script_pubkey).ok()
+            {
+              self.address_to_outpoint.remove(
+                address_from_script.to_string().as_bytes(),
+                &tx_in.previous_output.store(),
+              )?;
             }
           }
           map.value()
@@ -255,7 +254,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
           let og_inscription_id = InscriptionId {
             txid: Txid::from_slice(&txids_vec[0..32]).unwrap(),
-            index: 0
+            index: 0,
           };
 
           inscriptions.push(Flotsam {
@@ -263,13 +262,16 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             inscription_id: og_inscription_id,
             offset: 0,
             old_satpoint: SatPoint {
-              outpoint: OutPoint { txid: previous_txid, vout: 0 },
+              outpoint: OutPoint {
+                txid: previous_txid,
+                vout: 0,
+              },
               offset: 0,
             },
             origin: Origin::New {
               fee: input_value - tx.output.iter().map(|txout| txout.value).sum::<u64>(),
               inscription: _inscription.clone(),
-            }
+            },
           });
         }
       }
@@ -314,17 +316,19 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
       output_value = end;
 
-      let address_from_script = self.chain.address_from_script(&tx_out.clone().script_pubkey);
+      let address_from_script = self
+        .chain
+        .address_from_script(&tx_out.clone().script_pubkey);
 
       let address = if address_from_script.is_err() {
         [0u8; 34]
       } else {
         address_from_script
-            .unwrap()
-            .to_string()
-            .as_bytes()
-            .try_into()
-            .unwrap_or([0u8; 34])
+          .unwrap()
+          .to_string()
+          .as_bytes()
+          .try_into()
+          .unwrap_or([0u8; 34])
       };
 
       self.value_cache.insert(
@@ -332,10 +336,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
           vout: vout.try_into().unwrap(),
           txid,
         },
-        (
-          tx_out.clone().value,
-          address,
-        )
+        (tx_out.clone().value, address),
       );
     }
 
@@ -425,7 +426,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
               .map(|entry| InscriptionEntry::load(entry.value()).inscription_number),
           inscription_id: flotsam.inscription_id,
           action: match flotsam.origin {
-            Origin::Old { .. } => Action::Transfer,
+            Origin::Old(_) => Action::Transfer,
             Origin::New {
               fee: _,
               inscription,

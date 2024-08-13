@@ -6,39 +6,39 @@ use {
     deserialize_from_str::DeserializeFromStr,
     error::{OptionExt, ServerError, ServerResult},
   },
+  super::*,
+  crate::{
+    drc20::{script_key::ScriptKey, Tick},
+    page_config::PageConfig,
+    templates::{
+      AddressOutputJson, BlockHtml, BlockJson, DuneAddressJson, DuneBalance, DuneBalancesHtml,
+      DuneEntryJson, DuneHtml, DuneJson, DuneOutput, DuneOutputJson, DunesHtml, HomeHtml,
+      InputHtml, InscriptionByAddressJson, InscriptionHtml, InscriptionJson, InscriptionsHtml,
+      OutputHtml, OutputJson, PageContent, PageHtml, PreviewAudioHtml, PreviewImageHtml,
+      PreviewModelHtml, PreviewPdfHtml, PreviewTextHtml, PreviewUnknownHtml, PreviewVideoHtml,
+      RangeHtml, RareTxt, SatHtml, ShibescriptionJson, TransactionHtml, Utxo, DRC20,
+    },
+  },
   axum::{
     body,
     extract::{Extension, Json, Path, Query},
     headers::UserAgent,
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
-    Router,
-    routing::get, TypedHeader,
+    routing::get,
+    Router, TypedHeader,
   },
   axum_server::Handle,
-  crate::{
-    drc20::{script_key::ScriptKey, Tick},
-    page_config::PageConfig,
-    templates::{
-      AddressOutputJson, BlockHtml, BlockJson, DRC20, DuneAddressJson, DuneBalance,
-      DuneBalancesHtml, DuneEntryJson, DuneHtml, DuneJson, DuneOutput, DuneOutputJson, DunesHtml,
-      HomeHtml, InputHtml, InscriptionByAddressJson, InscriptionHtml, InscriptionJson,
-      InscriptionsHtml, OutputHtml, OutputJson, PageContent, PageHtml, PreviewAudioHtml,
-      PreviewImageHtml, PreviewModelHtml, PreviewPdfHtml, PreviewTextHtml, PreviewUnknownHtml,
-      PreviewVideoHtml, RangeHtml, RareTxt, SatHtml, ShibescriptionJson, TransactionHtml, Utxo,
-    },
-  },
   rust_embed::RustEmbed,
   rustls_acme::{
     acme::{LETS_ENCRYPT_PRODUCTION_DIRECTORY, LETS_ENCRYPT_STAGING_DIRECTORY},
-    AcmeConfig,
     axum::AxumAcceptor,
     caches::DirCache,
+    AcmeConfig,
   },
   serde_json::to_string,
-  std::{cmp::Ordering, str},
   std::collections::HashMap,
-  super::*,
+  std::{cmp::Ordering, str},
   tokio_stream::StreamExt,
   tower_http::{
     compression::CompressionLayer,
@@ -1613,8 +1613,6 @@ impl Server {
     let json = query.json.unwrap_or(false);
     let inscription = index.get_inscription_by_id(txid.into())?;
 
-    let etching = index.get_etching(txid)?;
-
     let mut blockhash = None;
     let mut confirmations = None;
 
@@ -1631,7 +1629,7 @@ impl Server {
       confirmations,
       inscription.map(|_| txid.into()),
       page_config.chain,
-      etching,
+      None,
     );
 
     Ok(if !json {
@@ -2284,7 +2282,7 @@ impl Server {
 mod tests {
   use bitcoin::blockdata::constants::COIN_VALUE;
 
-  use {reqwest::Url, std::net::TcpListener, super::*};
+  use {super::*, reqwest::Url, std::net::TcpListener};
 
   use crate::dunes::{Dunestone, Edict, Etching};
 
