@@ -1,4 +1,5 @@
 use {super::*, crate::wallet::Wallet};
+use crate::sat_point::SatPoint;
 
 #[derive(Serialize, Deserialize)]
 pub struct Output {
@@ -7,7 +8,7 @@ pub struct Output {
   pub explorer: String,
 }
 
-pub(crate) fn run(options: Options) -> Result {
+pub(crate) fn run(options: Options) -> SubcommandResult {
   let index = Index::open(&options)?;
   index.update()?;
 
@@ -33,7 +34,5 @@ pub(crate) fn run(options: Options) -> Result {
     }
   }
 
-  print_json(&output)?;
-
-  Ok(())
+  Ok(Box::new(output))
 }

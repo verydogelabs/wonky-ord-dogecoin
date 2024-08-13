@@ -9,7 +9,7 @@ use {
 
 const PROTOCOL_ID: &[u8] = b"ord";
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Default)]
 pub(crate) struct Inscription {
   pub(crate) body: Option<Vec<u8>>,
   pub(crate) content_type: Option<Vec<u8>>,
@@ -94,7 +94,8 @@ impl Inscription {
       return Media::Unknown;
     };
 
-    content_type.parse().unwrap_or(Media::Unknown)
+    let modified_content_type = content_type.replace("; ", ";");
+    modified_content_type.parse().unwrap_or(Media::Unknown)
   }
 
   pub(crate) fn body(&self) -> Option<&[u8]> {
@@ -107,6 +108,10 @@ impl Inscription {
 
   pub(crate) fn content_length(&self) -> Option<usize> {
     Some(self.body()?.len())
+  }
+
+  pub(crate) fn delegate(&self) -> Option<InscriptionId> {
+    Self::inscription_id_field(self.delegate.as_deref())
   }
 
   fn inscription_id_field(field: Option<&[u8]>) -> Option<InscriptionId> {
@@ -142,10 +147,6 @@ impl Inscription {
     let index = u32::from_le_bytes(index);
 
     Some(InscriptionId { txid, index })
-  }
-
-  pub(crate) fn delegate(&self) -> Option<InscriptionId> {
-    Self::inscription_id_field(self.delegate.as_deref())
   }
 
   pub(crate) fn content_type(&self) -> Option<&str> {
@@ -399,6 +400,24 @@ mod tests {
   use bitcoin::hashes::hex::FromHex;
 
   use super::*;
+
+  #[test]
+  fn valid_with_delegate() {
+    let mut script: Vec<&[u8]> = Vec::new();
+    script.push(&[3]);
+    script.push(b"ord");
+    script.push(&[81]);
+    script.push(&[0]);
+    script.push(&[0]);
+    script.push(&[0]);
+    script.push(&[91]);
+    script.push(&[32]);
+    script.push(&[0;32]);
+    assert_eq!(
+      InscriptionParser::parse(vec![Script::from(script.concat())]),
+      ParsedInscription::Complete(Inscription { body: Some(vec![]), content_type: Some(vec![]), delegate: Some(vec![0;32]) })
+    );
+  }
 
   #[test]
   fn empty() {
@@ -755,24 +774,6 @@ mod tests {
   }
 
   #[test]
-  fn valid_with_delegate() {
-    let mut script: Vec<&[u8]> = Vec::new();
-    script.push(&[3]);
-    script.push(b"ord");
-    script.push(&[81]);
-    script.push(&[0]);
-    script.push(&[0]);
-    script.push(&[0]);
-    script.push(&[91]);
-    script.push(&[32]);
-    script.push(&[0;32]);
-    assert_eq!(
-      InscriptionParser::parse(vec![Script::from(script.concat())]),
-      ParsedInscription::Complete(Inscription { body: Some(vec![]), content_type: Some(vec![]), delegate: Some(vec![0;32]) })
-    );
-  }
-
-  #[test]
   fn prefix_data() {
     let mut script: Vec<&[u8]> = Vec::new();
     script.push(&[4]);
@@ -889,7 +890,7 @@ mod tests {
 
     let tx = Transaction {
       version: 0,
-      lock_time: bitcoin::PackedLockTime(0),
+      lock_time: PackedLockTime(0),
       input: vec![
         TxIn {
           previous_output: OutPoint::null(),

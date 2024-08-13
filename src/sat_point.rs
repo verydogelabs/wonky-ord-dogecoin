@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, PartialEq, Copy, Clone, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Copy, Clone, Eq, PartialOrd, Ord, Default)]
 pub struct SatPoint {
   pub(crate) outpoint: OutPoint,
   pub(crate) offset: u64,

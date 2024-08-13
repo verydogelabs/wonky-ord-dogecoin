@@ -16,7 +16,7 @@ impl Drop for KillOnDrop {
 }
 
 impl Preview {
-  pub(crate) fn run(self) -> Result {
+  pub(crate) fn run(self) -> SubcommandResult {
     let tmpdir = TempDir::new()?;
 
     let rpc_port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
@@ -100,8 +100,6 @@ impl Preview {
       options,
       subcommand: Subcommand::Server(self.server),
     }
-    .run()?;
-
-    Ok(())
+    .run()
   }
 }

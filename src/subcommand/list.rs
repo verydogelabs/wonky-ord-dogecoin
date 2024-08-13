@@ -9,14 +9,18 @@ pub(crate) struct List {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Output {
   pub output: OutPoint,
-  pub start: u128,
+  pub start: u64,
   pub size: u64,
   pub rarity: Rarity,
 }
 
 impl List {
-  pub(crate) fn run(self, options: Options) -> Result {
+  pub(crate) fn run(self, options: Options) -> SubcommandResult {
     let index = Index::open(&options)?;
+
+    if !index.has_sat_index() {
+      bail!("list requires index created with `--index-sats` flag");
+    }
 
     index.update()?;
 
@@ -32,9 +36,7 @@ impl List {
           });
         }
 
-        print_json(outputs)?;
-
-        Ok(())
+        Ok(Box::new(outputs))
       }
       Some(crate::index::List::Spent) => Err(anyhow!("output spent.")),
       None => Err(anyhow!("output not found")),
@@ -42,7 +44,7 @@ impl List {
   }
 }
 
-fn list(outpoint: OutPoint, ranges: Vec<(u128, u128)>) -> Vec<(OutPoint, u128, u64, Rarity)> {
+fn list(outpoint: OutPoint, ranges: Vec<(u64, u64)>) -> Vec<(OutPoint, u64, u64, Rarity)> {
   ranges
     .into_iter()
     .map(|(start, end)| {

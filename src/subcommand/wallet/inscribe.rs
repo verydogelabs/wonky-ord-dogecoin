@@ -1,25 +1,26 @@
+use bitcoin::SchnorrSighashType;
+use bitcoin::secp256k1::schnorr::Signature;
 use {
   super::*,
   crate::wallet::Wallet,
   bitcoin::{
     blockdata::{opcodes, script},
-    policy::MAX_STANDARD_TX_WEIGHT,
-    schnorr::{TapTweak, TweakedKeyPair, TweakedPublicKey, UntweakedKeyPair},
-    secp256k1::{
-      self, constants::SCHNORR_SIGNATURE_SIZE, rand, schnorr::Signature, Secp256k1, XOnlyPublicKey,
-    },
-    util::key::PrivateKey,
+    PrivateKey,
+    util::schnorr::{TapTweak, TweakedKeyPair, TweakedPublicKey, UntweakedKeyPair},
     util::sighash::{Prevouts, SighashCache},
+    locktime::PackedLockTime,
+    policy::MAX_STANDARD_TX_WEIGHT,
+    secp256k1::{self, constants::SCHNORR_SIGNATURE_SIZE, rand, Secp256k1, XOnlyPublicKey},
     util::taproot::{ControlBlock, LeafVersion, TapLeafHash, TaprootBuilder},
-    PackedLockTime, SchnorrSighashType, Witness,
+    Witness,
   },
   bitcoincore_rpc::bitcoincore_rpc_json::{ImportDescriptors, Timestamp},
   bitcoincore_rpc::Client,
-  std::collections::BTreeSet,
 };
+use crate::sat_point::SatPoint;
 
-#[derive(Serialize)]
-struct Output {
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct Output {
   commit: Txid,
   inscription: InscriptionId,
   reveal: Txid,
@@ -57,7 +58,7 @@ pub(crate) struct Inscribe {
 }
 
 impl Inscribe {
-  pub(crate) fn run(self, options: Options) -> Result {
+  pub(crate) fn run(self, options: Options) -> SubcommandResult {
     let inscription = Inscription::from_file(options.chain(), &self.file)?;
 
     let index = Index::open(&options)?;
@@ -66,6 +67,8 @@ impl Inscribe {
     let client = options.dogecoin_rpc_client_for_wallet_command(false)?;
 
     let mut utxos = index.get_unspent_outputs(Wallet::load(&options)?)?;
+
+    let dunic_utxos = index.get_dunic_outputs(&utxos.keys().cloned().collect::<Vec<OutPoint>>())?;
 
     let inscriptions = index.get_inscriptions(None)?;
 
@@ -83,6 +86,7 @@ impl Inscribe {
         inscriptions,
         options.chain().network(),
         utxos.clone(),
+        dunic_utxos,
         commit_tx_change,
         reveal_tx_destination,
         self.commit_fee_rate.unwrap_or(self.fee_rate),
@@ -100,13 +104,12 @@ impl Inscribe {
     let fees =
       Self::calculate_fee(&unsigned_commit_tx, &utxos) + Self::calculate_fee(&reveal_tx, &utxos);
 
+    let mut reveal = Txid::all_zeros();
+    let mut commit = Txid::all_zeros();
+
     if self.dry_run {
-      print_json(Output {
-        commit: unsigned_commit_tx.txid(),
-        reveal: reveal_tx.txid(),
-        inscription: reveal_tx.txid().into(),
-        fees,
-      })?;
+      reveal = reveal_tx.txid();
+      commit = unsigned_commit_tx.txid();
     } else {
       if !self.no_backup {
         Inscribe::backup_recovery_key(&client, recovery_key_pair, options.chain().network())?;
@@ -116,23 +119,21 @@ impl Inscribe {
         .sign_raw_transaction_with_wallet(&unsigned_commit_tx, None, None)?
         .hex;
 
-      let commit = client
+      commit = client
         .send_raw_transaction(&signed_raw_commit_tx)
         .context("Failed to send commit transaction")?;
 
-      let reveal = client
+      reveal = client
         .send_raw_transaction(&reveal_tx)
         .context("Failed to send reveal transaction")?;
-
-      print_json(Output {
-        commit,
-        reveal,
-        inscription: reveal.into(),
-        fees,
-      })?;
     };
 
-    Ok(())
+    Ok(Box::new(Output {
+      commit,
+      reveal,
+      inscription: reveal.into(),
+      fees,
+    }))
   }
 
   fn calculate_fee(tx: &Transaction, utxos: &BTreeMap<OutPoint, Amount>) -> u64 {
@@ -150,6 +151,7 @@ impl Inscribe {
     inscriptions: BTreeMap<SatPoint, InscriptionId>,
     network: Network,
     utxos: BTreeMap<OutPoint, Amount>,
+    dunic_utxos: BTreeSet<OutPoint>,
     change: [Address; 2],
     destination: Address,
     commit_fee_rate: FeeRate,
@@ -166,7 +168,7 @@ impl Inscribe {
 
       utxos
         .keys()
-        .find(|outpoint| !inscribed_utxos.contains(outpoint))
+        .find(|outpoint| !inscribed_utxos.contains(outpoint) && !dunic_utxos.contains(outpoint))
         .map(|outpoint| SatPoint {
           outpoint: *outpoint,
           offset: 0,
@@ -225,6 +227,7 @@ impl Inscribe {
       inscriptions,
       utxos,
       commit_tx_address.clone(),
+      dunic_utxos,
       change,
       commit_fee_rate,
       reveal_fee + TransactionBuilder::TARGET_POSTAGE,
@@ -373,6 +376,7 @@ impl Inscribe {
 
 #[cfg(test)]
 mod tests {
+  use bitcoin::blockdata::constants::COIN_VALUE;
   use super::*;
 
   #[test]

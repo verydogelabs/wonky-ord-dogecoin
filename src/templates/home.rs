@@ -2,13 +2,13 @@ use super::*;
 
 #[derive(Boilerplate)]
 pub(crate) struct HomeHtml {
-  last: u64,
+  last: u32,
   blocks: Vec<BlockHash>,
   inscriptions: Vec<InscriptionId>,
 }
 
 impl HomeHtml {
-  pub(crate) fn new(blocks: Vec<(u64, BlockHash)>, inscriptions: Vec<InscriptionId>) -> Self {
+  pub(crate) fn new(blocks: Vec<(u32, BlockHash)>, inscriptions: Vec<InscriptionId>) -> Self {
     Self {
       last: blocks
         .get(0)

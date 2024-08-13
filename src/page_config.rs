@@ -4,4 +4,6 @@ use super::*;
 pub(crate) struct PageConfig {
   pub(crate) chain: Chain,
   pub(crate) domain: Option<String>,
+  pub(crate) index_sats: bool,
+  pub(crate) csp_origin: Option<String>,
 }

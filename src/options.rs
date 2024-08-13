@@ -1,49 +1,75 @@
 use {super::*, bitcoincore_rpc::Auth};
 
 #[derive(Clone, Default, Debug, Parser)]
-#[clap(group(
+#[command(group(
   ArgGroup::new("chains")
     .required(false)
-    .args(&["chain-argument", "signet", "regtest", "testnet"]),
+    .args(&["chain_argument", "signet", "regtest", "testnet"]),
 ))]
 pub(crate) struct Options {
-  #[clap(long, help = "Load Dogecoin Core data dir from <DOGECOIN_DATA_DIR>.")]
+  #[arg(long, help = "Load Dogecoin Core data dir from <DOGECOIN_DATA_DIR>.")]
   pub(crate) dogecoin_data_dir: Option<PathBuf>,
-  #[clap(
+  #[arg(
     long = "chain",
-    arg_enum,
+    value_enum,
     default_value = "mainnet",
     help = "Use <CHAIN>."
   )]
   pub(crate) chain_argument: Chain,
-  #[clap(long, help = "Load configuration from <CONFIG>.")]
+  #[arg(long, help = "Load configuration from <CONFIG>.")]
   pub(crate) config: Option<PathBuf>,
-  #[clap(long, help = "Load configuration from <CONFIG_DIR>.")]
+  #[arg(long, help = "Load configuration from <CONFIG_DIR>.")]
   pub(crate) config_dir: Option<PathBuf>,
-  #[clap(long, help = "Load Dogecoin Core RPC cookie file from <COOKIE_FILE>.")]
+  #[arg(long, help = "Load Dogecoin Core RPC cookie file from <COOKIE_FILE>.")]
   pub(crate) cookie_file: Option<PathBuf>,
-  #[clap(long, help = "Store index in <DATA_DIR>.")]
+  #[arg(long, help = "Use <CSP_ORIGIN> in Content-Security-Policy header. Set this to the public-facing URL of your ord instance.")]
+  pub(crate) csp_origin: Option<String>,
+  #[arg(long, help = "Store index in <DATA_DIR>.")]
   pub(crate) data_dir: Option<PathBuf>,
-  #[clap(
+  #[arg(
+    long,
+    help = "Set index cache to <DB_CACHE_SIZE> bytes. By default takes 1/4 of available RAM."
+  )]
+  pub(crate) db_cache_size: Option<usize>,
+  #[arg(
     long,
     help = "Don't look for inscriptions below <FIRST_INSCRIPTION_HEIGHT>."
   )]
-  pub(crate) first_inscription_height: Option<u64>,
-  #[clap(long, help = "Limit index to <HEIGHT_LIMIT> blocks.")]
-  pub(crate) height_limit: Option<u64>,
-  #[clap(long, help = "Use index at <INDEX>.")]
+  pub(crate) first_inscription_height: Option<u32>,
+  #[arg(
+  long,
+  help = "Don't look for dunes below <FIRST_DUNE_HEIGHT>."
+  )]
+  pub(crate) first_dune_height: Option<u32>,
+  #[arg(long, help = "Limit index to <HEIGHT_LIMIT> blocks.")]
+  pub(crate) height_limit: Option<u32>,
+  #[arg(long, help = "Use index at <INDEX>.")]
   pub(crate) index: Option<PathBuf>,
-  #[clap(long, help = "Track location of all satoshis.")]
+  #[arg(long, help = "Track drc20 tokens and balances.")]
+  pub(crate) index_drc20: bool,
+  #[arg(
+  long,
+  help = "Track location of dunes. DUNES ARE IN AN UNFINISHED PRE-ALPHA STATE AND SUBJECT TO CHANGE AT ANY TIME."
+  )]
+  pub(crate) index_dunes: bool,
+  #[arg(long, help = "Track location of all satoshis.")]
   pub(crate) index_sats: bool,
-  #[clap(long, short, help = "Use regtest. Equivalent to `--chain regtest`.")]
+  #[arg(long, help = "Store transactions in index.")]
+  pub(crate) index_transactions: bool,
+  #[arg(long, short, help = "Use regtest. Equivalent to `--chain regtest`.")]
   pub(crate) regtest: bool,
-  #[clap(long, help = "Connect to Dogecoin Core RPC at <RPC_URL>.")]
+  #[arg(long, help = "Connect to Dogecoin Core RPC at <RPC_URL>.")]
   pub(crate) rpc_url: Option<String>,
-  #[clap(long, short, help = "Use signet. Equivalent to `--chain signet`.")]
+  #[arg(
+  long,
+  help = "Number of parallel requests to dogecoin node."
+  )]
+  pub(crate) nr_parallel_requests: Option<usize>,
+  #[arg(long, short, help = "Use signet. Equivalent to `--chain signet`.")]
   pub(crate) signet: bool,
-  #[clap(long, short, help = "Use testnet. Equivalent to `--chain testnet`.")]
+  #[arg(long, short, help = "Use testnet. Equivalent to `--chain testnet`.")]
   pub(crate) testnet: bool,
-  #[clap(long, default_value = "ord", help = "Use wallet named <WALLET>.")]
+  #[arg(long, default_value = "ord", help = "Use wallet named <WALLET>.")]
   pub(crate) wallet: String,
 }
 
@@ -60,7 +86,11 @@ impl Options {
     }
   }
 
-  pub(crate) fn first_inscription_height(&self) -> u64 {
+  pub(crate) fn csp_origin(&self) -> Option<String> {
+    self.csp_origin.clone()
+  }
+
+  pub(crate) fn first_inscription_height(&self) -> u32 {
     if self.chain() == Chain::Regtest {
       self.first_inscription_height.unwrap_or(0)
     } else if integration_test() {
@@ -72,6 +102,22 @@ impl Options {
     }
   }
 
+  pub(crate) fn first_dune_height(&self) -> u32 {
+    if self.chain() == Chain::Regtest {
+      self.first_dune_height.unwrap_or(0)
+    } else if integration_test() {
+      0
+    } else {
+      self
+          .first_dune_height
+          .unwrap_or_else(|| self.chain().first_dune_height())
+    }
+  }
+
+  pub(crate) fn index_dunes(&self) -> bool {
+    self.index_dunes
+  }
+
   pub(crate) fn rpc_url(&self) -> String {
     self.rpc_url.clone().unwrap_or_else(|| {
       format!(
@@ -80,6 +126,10 @@ impl Options {
         self.wallet
       )
     })
+  }
+
+  pub(crate) fn nr_parallel_requests(&self) -> usize {
+    self.nr_parallel_requests.clone().unwrap_or(12)
   }
 
   pub(crate) fn cookie_file(&self) -> Result<PathBuf> {
@@ -595,5 +645,32 @@ mod tests {
         hidden: iter::once(id).collect(),
       }
     );
+  }
+
+  #[test]
+  fn index_dunes_only_returns_true_if_index_dunes_flag_is_passed_and_not_on_mainnnet() {
+    assert!(Arguments::try_parse_from([
+      "ord",
+      "--chain=signet",
+      "--index-dunes",
+      "index",
+      "update"
+    ])
+    .unwrap()
+    .options
+    .index_dunes(),);
+    assert!(!Arguments::try_parse_from([
+      "ord",
+      "--index-dunes",
+      "index",
+      "update"
+    ])
+    .unwrap()
+    .options
+    .index_dunes(),);
+    assert!(!Arguments::try_parse_from(["ord", "index", "update"])
+      .unwrap()
+      .options
+      .index_dunes(),);
   }
 }

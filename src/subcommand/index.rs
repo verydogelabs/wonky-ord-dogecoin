@@ -1,9 +1,10 @@
 use super::*;
 
-pub(crate) fn run(options: Options) -> Result {
+mod update;
+
+pub(crate) fn run(options: Options) -> SubcommandResult {
   let index = Index::open(&options)?;
 
   index.update()?;
-
-  Ok(())
+  Ok(Box::new(()))
 }
