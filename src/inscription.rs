@@ -1,10 +1,10 @@
 use {
-  super::*,
   bitcoin::{
     blockdata::{opcodes, script},
     Script,
   },
   std::str,
+  super::*,
 };
 
 const PROTOCOL_ID: &[u8] = b"ord";
@@ -13,7 +13,7 @@ const PROTOCOL_ID: &[u8] = b"ord";
 pub(crate) struct Inscription {
   pub(crate) body: Option<Vec<u8>>,
   pub(crate) content_type: Option<Vec<u8>>,
-  delegate: Option<Vec<u8>>,
+  pub(crate) delegate: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -26,7 +26,11 @@ pub(crate) enum ParsedInscription {
 impl Inscription {
   #[cfg(test)]
   pub(crate) fn new(content_type: Option<Vec<u8>>, body: Option<Vec<u8>>) -> Self {
-    Self { content_type, body, delegate: None }
+    Self {
+      content_type,
+      body,
+      delegate: None,
+    }
   }
 
   pub(crate) fn from_transactions(txs: Vec<Transaction>) -> ParsedInscription {
@@ -231,7 +235,7 @@ impl InscriptionParser {
                 }
 
                 fields.entry(key).or_default().push(value)
-              },
+              }
               _ => {}
             }
           }
@@ -412,10 +416,14 @@ mod tests {
     script.push(&[0]);
     script.push(&[91]);
     script.push(&[32]);
-    script.push(&[0;32]);
+    script.push(&[0; 32]);
     assert_eq!(
       InscriptionParser::parse(vec![Script::from(script.concat())]),
-      ParsedInscription::Complete(Inscription { body: Some(vec![]), content_type: Some(vec![]), delegate: Some(vec![0;32]) })
+      ParsedInscription::Complete(Inscription {
+        body: Some(vec![]),
+        content_type: Some(vec![]),
+        delegate: Some(vec![0; 32])
+      })
     );
   }
 
