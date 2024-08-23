@@ -1,0 +1,851 @@
+openapi: 3.0.0
+info:
+  title: Wonky Ord API
+  description: API for getting transactions, blocks, balances, inscriptions, and dune info on Dogecoin.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://wonky-ord.dogeord.io
+    description: Wonky Prod Server
+
+paths:
+  /block-count:
+    get:
+      summary: Get block count
+      operationId: getBlockCount
+      responses:
+        '200':
+          description: Block count
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /block/{query}:
+    get:
+      summary: Get block by height or hash
+      operationId: getBlock
+      parameters:
+        - name: query
+          in: path
+          required: true
+          description: Block height or hash
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Block details
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /blocks/{start}/{end}:
+    get:
+      summary: Get blocks in range
+      operationId: getBlocks
+      parameters:
+        - name: start
+          in: path
+          required: true
+          description: Start block height
+          schema:
+            type: integer
+        - name: end
+          in: path
+          required: true
+          description: End block height
+          schema:
+            type: integer
+        - name: no_inscriptions
+          in: query
+          required: false
+          description: Skip inscriptions data
+          schema:
+            type: boolean
+        - name: no_input_data
+          in: query
+          required: false
+          description: Skip input data
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Blocks details
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /tx/{txid}:
+    get:
+      summary: Get transaction details
+      operationId: getTransaction
+      parameters:
+        - name: txid
+          in: path
+          required: true
+          description: Transaction ID
+          schema:
+            type: string
+        - name: json
+          in: query
+          required: false
+          description: Return response in JSON format
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Transaction details
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+
+  /output/{output}:
+    get:
+      summary: Get output details by OutPoint
+      operationId: getOutput
+      parameters:
+        - name: output
+          in: path
+          required: true
+          description: "OutPoint (format: txid:vout)"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Output details
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /utxos/balance/{address}:
+    get:
+      summary: Get UTXO balance for an address
+      operationId: getUtxosBalance
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Cryptocurrency address
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Limit the number of results
+          schema:
+            type: integer
+        - name: show_all
+          in: query
+          required: false
+          description: Show all UTXOs
+          schema:
+            type: boolean
+        - name: show_unsafe
+          in: query
+          required: false
+          description: Show unsafe UTXOs
+          schema:
+            type: boolean
+        - name: value_filter
+          in: query
+          required: false
+          description: Filter UTXOs by value
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: UTXO balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  utxos:
+                    type: array
+                    items:
+                      type: object
+                  total_shibes:
+                    type: integer
+                  total_utxos:
+                    type: integer
+                  total_inscription_shibes:
+                    type: integer
+
+  /drc20/balance/{address}:
+    get:
+      summary: Get DRC20 balance for an address
+      operationId: getDrc20Balance
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Cryptocurrency address
+          schema:
+            type: string
+        - name: tick
+          in: query
+          required: false
+          description: Filter by token tick
+          schema:
+            type: string
+        - name: show_utxos
+          in: query
+          required: false
+          description: Show UTXO information
+          schema:
+            type: boolean
+        - name: value_filter
+          in: query
+          required: false
+          description: Filter by value
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: DRC20 balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  drc20:
+                    type: array
+                    items:
+                      type: object
+
+  /drc20/tick/{tick}:
+    get:
+      summary: Get DRC20 tick information
+      operationId: getDrc20TickInfo
+      parameters:
+        - name: tick
+          in: path
+          required: true
+          description: DRC20 tick identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: DRC20 tick information
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /drc20/tick:
+    get:
+      summary: Get all DRC20 tick information
+      operationId: getAllDrc20TickInfo
+      responses:
+        '200':
+          description: DRC20 tick information
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /drc20/validate:
+    get:
+      summary: Validate DRC20 inscriptions
+      operationId: validateDrc20
+      parameters:
+        - name: addresses
+          in: query
+          required: true
+          description: Comma-separated list of addresses
+          schema:
+            type: string
+        - name: inscription_ids
+          in: query
+          required: true
+          description: Comma-separated list of inscription IDs
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Validation results
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /dune/{dune}:
+    get:
+      summary: Get dune details
+      operationId: getDune
+      parameters:
+        - name: dune
+          in: path
+          required: true
+          description: Dune identifier
+          schema:
+            type: string
+        - name: json
+          in: query
+          required: false
+          description: Return response in JSON format
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Dune details
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+
+  /dunes:
+    get:
+      summary: Get all dunes
+      operationId: getAllDunes
+      responses:
+        '200':
+          description: List of dunes
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /dunes/balances:
+    get:
+      summary: Get dune balances
+      operationId: getDuneBalances
+      responses:
+        '200':
+          description: Dune balances
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /dunes/balance/{address}:
+    get:
+      summary: Get dune balances for an address
+      operationId: getDuneBalancesByAddress
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Cryptocurrency address
+          schema:
+            type: string
+        - name: show_all
+          in: query
+          required: false
+          description: Show all dune balances
+          schema:
+            type: boolean
+        - name: list_dunes
+          in: query
+          required: false
+          description: List dune information
+          schema:
+            type: boolean
+        - name: filter
+          in: query
+          required: false
+          description: Filter dune information
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dune balance information
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /inscription/{inscription_id}:
+    get:
+      summary: Get inscription details
+      operationId: getInscription
+      parameters:
+        - name: inscription_id
+          in: path
+          required: true
+          description: Inscription ID
+          schema:
+            type: string
+        - name: json
+          in: query
+          required: false
+          description: Return response in JSON format
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Inscription details
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+
+  /inscriptions:
+    get:
+      summary: Get all inscriptions
+      operationId: getAllInscriptions
+      responses:
+        '200':
+          description: List of inscriptions
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /inscriptions/{from}:
+    get:
+      summary: Get inscriptions from a specific number
+      operationId: getInscriptionsFrom
+      parameters:
+        - name: from
+          in: path
+          required: true
+          description: Inscription number to start from
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of inscriptions
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /shibescription/{inscription_id}:
+    get:
+      summary: Get Shibescription details
+      operationId: getShibescription
+      parameters:
+        - name: inscription_id
+          in: path
+          required: true
+          description: Inscription ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Shibescription details
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /dunes_on_outputs:
+    get:
+      summary: Get dunes by output
+      operationId: getDunesByOutput
+      parameters:
+        - name: outputs
+          in: query
+          required: true
+          description: "Comma-separated list of outputs (format: txid:vout)"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dunes on outputs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /utxos/balance/{address}/{page}:
+    get:
+      summary: Get paginated UTXO balance for an address
+      operationId: getUtxosBalancePaginated
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Cryptocurrency address
+          schema:
+            type: string
+        - name: page
+          in: path
+          required: true
+          description: Page number
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          description: Limit the number of results
+          schema:
+            type: integer
+        - name: show_all
+          in: query
+          required: false
+          description: Show all UTXOs
+          schema:
+            type: boolean
+        - name: value_filter
+          in: query
+          required: false
+          description: Filter UTXOs by value
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: UTXO balance
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /drc20/balance/{address}/{page}:
+    get:
+      summary: Get paginated DRC20 balance for an address
+      operationId: getDrc20BalancePaginated
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Cryptocurrency address
+          schema:
+            type: string
+        - name: page
+          in: path
+          required: true
+          description: Page number
+          schema:
+            type: integer
+        - name: tick
+          in: query
+          required: false
+          description: Filter by token tick
+          schema:
+            type: string
+        - name: value_filter
+          in: query
+          required: false
+          description: Filter by value
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: DRC20 balance
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /dunes/balance/{address}/{page}:
+    get:
+      summary: Get paginated dune balances for an address
+      operationId: getDuneBalancesPaginated
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Cryptocurrency address
+          schema:
+            type: string
+        - name: page
+          in: path
+          required: true
+          description: Page number
+          schema:
+            type: integer
+        - name: show_all
+          in: query
+          required: false
+          description: Show all dune balances
+          schema:
+            type: boolean
+        - name: list_dunes
+          in: query
+          required: false
+          description: List dune information
+          schema:
+            type: boolean
+        - name: filter
+          in: query
+          required: false
+          description: Filter dune information
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dune balance information
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /search:
+    get:
+      summary: Search for blocks, transactions, or inscriptions
+      operationId: search
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: Search query
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to relevant resource
+
+  /status:
+    get:
+      summary: Get server status
+      operationId: getStatus
+      responses:
+        '200':
+          description: Server status
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /favicon.ico:
+    get:
+      summary: Get favicon
+      operationId: getFavicon
+      responses:
+        '200':
+          description: Favicon
+          content:
+            image/png:
+              schema:
+                type: string
+
+  /range/{start}/{end}:
+    get:
+      summary: Get details of a range of Satoshi values
+      operationId: getRange
+      parameters:
+        - name: start
+          in: path
+          required: true
+          description: Start Satoshi value
+          schema:
+            type: integer
+        - name: end
+          in: path
+          required: true
+          description: End Satoshi value
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Satoshi range details
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /sat/{sat}:
+    get:
+      summary: Get Satoshi details
+      operationId: getSat
+      parameters:
+        - name: sat
+          in: path
+          required: true
+          description: Satoshi value
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Satoshi details
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /preview/{inscription_id}:
+    get:
+      summary: Get preview of an inscription
+      operationId: previewInscription
+      parameters:
+        - name: inscription_id
+          in: path
+          required: true
+          description: Inscription ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inscription preview
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /static/{path}:
+    get:
+      summary: Get static asset
+      operationId: getStaticAsset
+      parameters:
+        - name: path
+          in: path
+          required: true
+          description: Static asset path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Static asset
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+
+  /content/{inscription_id}:
+    get:
+      summary: Get content of an inscription
+      operationId: getInscriptionContent
+      parameters:
+        - name: inscription_id
+          in: path
+          required: true
+          description: Inscription ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inscription content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+
+  /search/{query}:
+    get:
+      summary: Search by query
+      operationId: searchByPath
+      parameters:
+        - name: query
+          in: path
+          required: true
+          description: Search query
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to relevant resource
+
+  /faq:
+    get:
+      summary: Redirect to FAQ
+      operationId: faq
+      responses:
+        '302':
+          description: Redirect to FAQ
+          headers:
+            Location:
+              description: URL of the FAQ page
+              schema:
+                type: string
+
+  /bounties:
+    get:
+      summary: Redirect to bounties
+      operationId: bounties
+      responses:
+        '302':
+          description: Redirect to bounties
+          headers:
+            Location:
+              description: URL of the bounties page
+              schema:
+                type: string
+
+components:
+  schemas:
+    Utxo:
+      type: object
+      properties:
+        txid:
+          type: string
+        vout:
+          type: integer
+        script:
+          type: string
+        shibes:
+          type: integer
+        confirmations:
+          type: integer
+    InscriptionByAddressJson:
+      type: object
+      properties:
+        utxo:
+          $ref: '#/components/schemas/Utxo'
+        content:
+          type: string
+        content_length:
+          type: integer
+        content_type:
+          type: string
+        genesis_height:
+          type: integer
+        inscription_id:
+          type: string
+        inscription_number:
+          type: integer
+        timestamp:
+          type: integer
+        offset:
+          type: integer
+    DuneOutput:
+      type: object
+      properties:
+        txid:
+          type: string
+        vout:
+          type: integer
+        script:
+          type: string
+        shibes:
+          type: integer
+        balance:
+          type: integer
+    DuneBalance:
+      type: object
+      properties:
+        dune:
+          type: string
+        divisibility:
+          type: integer
+        symbol:
+          type: string
+        total_balance:
+          type: integer
+        total_outputs:
+          type: integer
+        balances:
+          type: array
+          items:
+            $ref: '#/components/schemas/DuneOutput'
+    DuneHolder:
+      type: object
+      properties:
+        dune:
+          type: string
+        holder:
+          type: array
+          items:
+            type: string
+
