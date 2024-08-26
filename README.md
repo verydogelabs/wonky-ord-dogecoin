@@ -84,5 +84,14 @@ docker build -t verydogelabs/wonky-ord-dogecoin .
 docker compose up -d
 ```
 
+### Stop the ord in a docker container
+When stopping the ord in a container it is important to add a timeout.
+If no timeout is add, the process cannot close the database properly and the next start will take ages or fail.
+
+```shell
+docker compose stop -t 600
+docker compose down
+```
+
 ## Original README
 Please check the original [README](READMEFROMAPEZORD.md) for more information on how to run `ord` and the required env vars.
