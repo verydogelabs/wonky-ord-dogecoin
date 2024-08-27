@@ -30,7 +30,6 @@ clap = { version = "4.4.2", features = ["derive"] }
 ctrlc = { version = "3.2.1", features = ["termination"] }
 derive_more = "0.99.17"
 dirs = "4.0.0"
-dotenv = "0.15.0"
 env_logger = "0.10.0"
 futures = "0.3.21"
 hex = "0.4.3"

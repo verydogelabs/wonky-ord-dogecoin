@@ -1,7 +1,4 @@
-extern crate dotenv;
-
 use std::env;
-use dotenv::dotenv;
 use serde_json::json;
 use {super::*, updater::BlockData};
 
