@@ -329,6 +329,8 @@ impl<'index> Updater<'_> {
     block: BlockData,
     value_cache: &mut HashMap<OutPoint, OutPointMapValue>,
   ) -> Result<()> {
+    Reorg::detect_reorg(&block, self.height, self.index)?;
+
     let start = Instant::now();
     let mut sat_ranges_written = 0;
     let mut outputs_in_block = 0;
@@ -386,15 +388,6 @@ impl<'index> Updater<'_> {
     }
 
     let mut height_to_block_hash = wtx.open_table(HEIGHT_TO_BLOCK_HASH)?;
-
-    if let Some(prev_height) = self.height.checked_sub(1) {
-      let prev_hash = height_to_block_hash.get(&prev_height)?.unwrap();
-
-      if prev_hash.value() != block.header.prev_blockhash.as_ref() {
-        index.reorged.store(true, atomic::Ordering::Relaxed);
-        return Err(anyhow!("reorg detected at or before {prev_height}"));
-      }
-    }
 
     let mut inscription_id_to_inscription_entry =
       wtx.open_table(INSCRIPTION_ID_TO_INSCRIPTION_ENTRY)?;
@@ -716,6 +709,8 @@ impl<'index> Updater<'_> {
     Index::increment_statistic(&wtx, Statistic::Commits, 1)?;
 
     wtx.commit()?;
+
+    Reorg::update_savepoints(self.index, self.height)?;
 
     Ok(())
   }

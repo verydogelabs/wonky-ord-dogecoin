@@ -416,7 +416,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
     self
         .operations
-        .entry(flotsam.inscription_id.txid) // not correct
+        .entry(flotsam.txid)
         .or_default()
         .push(InscriptionOp {
           txid: flotsam.txid,

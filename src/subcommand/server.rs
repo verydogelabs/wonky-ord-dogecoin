@@ -1640,10 +1640,10 @@ impl Server {
   }
 
   async fn status(Extension(index): Extension<Arc<Index>>) -> (StatusCode, &'static str) {
-    if index.is_reorged() {
+    if index.is_unrecoverably_reorged() {
       (
         StatusCode::OK,
-        "reorg detected, please rebuild the database.",
+        "unrecoverable reorg detected, please rebuild the database.",
       )
     } else {
       (
