@@ -5,6 +5,7 @@ use {
       BlockHashValue, DuneEntryValue, DuneIdValue, Entry, InscriptionEntry, InscriptionEntryValue,
       InscriptionIdValue, OutPointMapValue, OutPointValue, SatPointValue, SatRange, TxidValue,
     },
+    reorg::*,
     updater::Updater,
   },
   bitcoin::BlockHeader,
@@ -36,6 +37,7 @@ use crate::templates::BlockHashAndConfirmations;
 pub(crate) use self::entry::DuneEntry;
 
 mod entry;
+mod reorg;
 mod fetcher;
 mod rtx;
 mod updater;
@@ -91,11 +93,11 @@ pub(crate) struct Index {
   genesis_block_coinbase_transaction: Transaction,
   genesis_block_coinbase_txid: Txid,
   height_limit: Option<u32>,
-  reorged: AtomicBool,
   index_drc20: bool,
   index_dunes: bool,
   index_sats: bool,
   index_transactions: bool,
+  unrecoverably_reorged: AtomicBool,
   rpc_url: String,
   nr_parallel_requests: usize,
   chain: Chain,
@@ -363,11 +365,11 @@ impl Index {
       first_dune_height: options.first_dune_height(),
       genesis_block_coinbase_transaction,
       height_limit: options.height_limit,
-      reorged: AtomicBool::new(false),
       index_drc20,
       index_dunes,
       index_sats,
       index_transactions,
+      unrecoverably_reorged: AtomicBool::new(false),
       rpc_url,
       nr_parallel_requests,
       chain: options.chain_argument,
@@ -499,18 +501,32 @@ impl Index {
     let mut updater = Updater::new(self)?;
 
     loop {
-      return match updater.update_index() {
-        Ok(ok) => Ok(ok),
+      match updater.update_index() {
+        Ok(ok) => return Ok(ok),
         Err(err) => {
           log::info!("{}", err.to_string());
-          Err(err)
+
+            match err.downcast_ref() {
+              Some(&ReorgError::Recoverable { height, depth }) => {
+                Reorg::handle_reorg(self, height, depth)?;
+
+                updater = Updater::new(self)?;
+              }
+              Some(&ReorgError::Unrecoverable) => {
+                self
+                  .unrecoverably_reorged
+                  .store(true, atomic::Ordering::Relaxed);
+                return Err(anyhow!(ReorgError::Unrecoverable));
+              }
+              _ => return Err(err),
+            };
+          }
         }
-      };
     }
   }
 
-  pub(crate) fn is_reorged(&self) -> bool {
-    self.reorged.load(atomic::Ordering::Relaxed)
+  pub(crate) fn is_unrecoverably_reorged(&self) -> bool {
+    self.unrecoverably_reorged.load(atomic::Ordering::Relaxed)
   }
 
   fn begin_read(&self) -> Result<rtx::Rtx> {
@@ -2798,6 +2814,160 @@ mod tests {
           .to_string(),
         r"output in Dogecoin Core wallet but not in ord index: [[:xdigit:]]{64}:\d+"
       );
+    }
+  }
+
+  #[test]
+  fn recover_from_reorg() {
+    for context in Context::configurations() {
+      context.mine_blocks(1);
+
+      let txid = context.rpc_server.broadcast_tx(TransactionTemplate {
+        inputs: &[(1, 0, 0)],
+        witness: inscription("text/plain;charset=utf-8", "hello").to_witness(),
+        ..Default::default()
+      });
+      let first_id = InscriptionId { txid, index: 0 };
+      let first_location = SatPoint {
+        outpoint: OutPoint { txid, vout: 0 },
+        offset: 0,
+      };
+
+      context.mine_blocks(6);
+
+      context
+          .index
+          .assert_inscription_location(first_id, first_location, Some(50 * COIN_VALUE));
+
+      let txid = context.rpc_server.broadcast_tx(TransactionTemplate {
+        inputs: &[(2, 0, 0)],
+        witness: inscription("text/plain;charset=utf-8", "hello").to_witness(),
+        ..Default::default()
+      });
+      let second_id = InscriptionId { txid, index: 0 };
+      let second_location = SatPoint {
+        outpoint: OutPoint { txid, vout: 0 },
+        offset: 0,
+      };
+
+      context.mine_blocks(1);
+
+      context
+          .index
+          .assert_inscription_location(second_id, second_location, Some(100 * COIN_VALUE));
+
+      context.rpc_server.invalidate_tip();
+      context.mine_blocks(2);
+
+      context
+          .index
+          .assert_inscription_location(first_id, first_location, Some(50 * COIN_VALUE));
+
+      context.index.assert_non_existence_of_inscription(second_id);
+    }
+  }
+
+  #[test]
+  fn recover_from_3_block_deep_and_consecutive_reorg() {
+    for context in Context::configurations() {
+      context.mine_blocks(1);
+
+      let txid = context.rpc_server.broadcast_tx(TransactionTemplate {
+        inputs: &[(1, 0, 0)],
+        witness: inscription("text/plain;charset=utf-8", "hello").to_witness(),
+        ..Default::default()
+      });
+      let first_id = InscriptionId { txid, index: 0 };
+      let first_location = SatPoint {
+        outpoint: OutPoint { txid, vout: 0 },
+        offset: 0,
+      };
+
+      context.mine_blocks(10);
+
+      let txid = context.rpc_server.broadcast_tx(TransactionTemplate {
+        inputs: &[(2, 0, 0)],
+        witness: inscription("text/plain;charset=utf-8", "hello").to_witness(),
+        ..Default::default()
+      });
+      let second_id = InscriptionId { txid, index: 0 };
+      let second_location = SatPoint {
+        outpoint: OutPoint { txid, vout: 0 },
+        offset: 0,
+      };
+
+      context.mine_blocks(1);
+
+      context
+          .index
+          .assert_inscription_location(second_id, second_location, Some(100 * COIN_VALUE));
+
+      context.rpc_server.invalidate_tip();
+      context.rpc_server.invalidate_tip();
+      context.rpc_server.invalidate_tip();
+
+      context.mine_blocks(4);
+
+      context.index.assert_non_existence_of_inscription(second_id);
+
+      context.rpc_server.invalidate_tip();
+
+      context.mine_blocks(2);
+
+      context
+          .index
+          .assert_inscription_location(first_id, first_location, Some(50 * COIN_VALUE));
+    }
+  }
+
+  #[test]
+  fn recover_from_very_unlikely_7_block_deep_reorg() {
+    for context in Context::configurations() {
+      context.mine_blocks(1);
+
+      let txid = context.rpc_server.broadcast_tx(TransactionTemplate {
+        inputs: &[(1, 0, 0)],
+        witness: inscription("text/plain;charset=utf-8", "hello").to_witness(),
+        ..Default::default()
+      });
+
+      context.mine_blocks(11);
+
+      let first_id = InscriptionId { txid, index: 0 };
+      let first_location = SatPoint {
+        outpoint: OutPoint { txid, vout: 0 },
+        offset: 0,
+      };
+
+      let txid = context.rpc_server.broadcast_tx(TransactionTemplate {
+        inputs: &[(2, 0, 0)],
+        witness: inscription("text/plain;charset=utf-8", "hello").to_witness(),
+        ..Default::default()
+      });
+
+      let second_id = InscriptionId { txid, index: 0 };
+      let second_location = SatPoint {
+        outpoint: OutPoint { txid, vout: 0 },
+        offset: 0,
+      };
+
+      context.mine_blocks(7);
+
+      context
+          .index
+          .assert_inscription_location(second_id, second_location, Some(100 * COIN_VALUE));
+
+      for _ in 0..7 {
+        context.rpc_server.invalidate_tip();
+      }
+
+      context.mine_blocks(9);
+
+      context.index.assert_non_existence_of_inscription(second_id);
+
+      context
+          .index
+          .assert_inscription_location(first_id, first_location, Some(50 * COIN_VALUE));
     }
   }
 }
