@@ -1,6 +1,7 @@
+use http::HeaderName;
 use linked_hash_map::LinkedHashMap;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
-
+use serde_json::json;
 use {
   self::{
     deserialize_from_str::DeserializeFromStr,
@@ -15,7 +16,7 @@ use {
       DuneEntryJson, DuneHtml, DuneJson, DuneOutput, DuneOutputJson, DunesHtml, HomeHtml,
       InputHtml, InscriptionByAddressJson, InscriptionHtml, InscriptionJson, InscriptionsHtml,
       OutputHtml, OutputJson, PageContent, PageHtml, PreviewAudioHtml, PreviewImageHtml,
-      PreviewModelHtml, PreviewPdfHtml, PreviewTextHtml, PreviewUnknownHtml, PreviewVideoHtml,
+      PreviewModelHtml, PreviewPdfHtml, PreviewTextHtml, Operation, PreviewUnknownHtml, PreviewVideoHtml,
       RangeHtml, RareTxt, SatHtml, ShibescriptionJson, TransactionHtml, Utxo, DRC20,
     },
   },
@@ -46,6 +47,9 @@ use {
     set_header::SetResponseHeaderLayer,
   },
 };
+use crate::drc20::operation::{deserialize_drc20_operation, Action};
+use crate::drc20::token_info::{ExtendedTokenInfo, HolderBalanceForTick, HoldersInfoForTick};
+use crate::templates::{DRC20Balance, DRC20Output, DRC20UtxoOutput};
 
 mod error;
 mod query;
@@ -116,6 +120,20 @@ pub(crate) struct UtxoAddressJson {
 struct UtxoBalanceQuery {
   limit: Option<usize>,
   show_all: Option<bool>,
+  show_unsafe: Option<bool>,
+  value_filter: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct Drc20TickInfoQuery {
+  show_holder: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct Drc20BalanceQuery {
+  show_all: Option<bool>,
+  show_utxos: Option<bool>,
+  tick: Option<String>,
   value_filter: Option<u64>,
 }
 
@@ -161,6 +179,12 @@ struct InscriptionsByOutputsQuery {
 struct BlocksQuery {
   no_inscriptions: Option<bool>,
   no_input_data: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct ValidityQuery {
+  addresses: Option<String>,
+  inscription_ids: String,
 }
 
 #[derive(Deserialize)]
@@ -312,16 +336,16 @@ impl Server {
           "/inscriptions/balance/:address/:page",
           get(Self::inscriptions_by_address),
         )
+        .route("/inscriptions/validate", get(Self::inscriptions_validate))
         .route("/drc20/tick/:tick", get(Self::drc20_tick_info))
         .route("/drc20/tick", get(Self::drc20_all_tick_info))
         .route(
-          "/drc20/tick/:tick/address/:address/balance",
-          get(Self::drc20_balance),
+            "/drc20/balance/:address",
+            get(Self::drc20_by_address_unpaginated),
         )
-        .route(
-          "/drc20/address/:address/balance",
-          get(Self::drc20_all_balance),
-        )
+        .route("/drc20/validate", get(Self::drc20_validate))
+        .route("/drc20/ticks", get(Self::drc20_all_ticks))
+        .route("/drc20/tick/holder/:tick", get(Self::drc20_tick_holder))
         .route("/dunes_on_outputs", get(Self::dunes_by_outputs))
         .route("/sat/:sat", get(Self::sat))
         .route("/search", get(Self::search_by_query))
@@ -610,6 +634,7 @@ impl Server {
     let (address, page) = (address, page.unwrap_or(0));
     let show_all = query.show_all.unwrap_or(false);
     let value_filter = query.value_filter.unwrap_or(0);
+    let show_unsafe = query.show_unsafe.unwrap_or(false);
 
     let items_per_page = query.limit.unwrap_or(10);
     let page = page as usize;
@@ -652,7 +677,9 @@ impl Server {
 
       if !index.get_inscriptions_on_output(outpoint)?.is_empty() {
         inscription_shibes += output.value as u128;
-        continue;
+        if !show_unsafe {
+          continue;
+        }
       }
 
       element_counter += 1;
@@ -682,6 +709,216 @@ impl Server {
       })
       .into_response(),
     )
+  }
+
+  async fn drc20_by_address(
+    Extension(index): Extension<Arc<Index>>,
+    Path(params): Path<(String, u32)>,
+    Query(query): Query<Drc20BalanceQuery>,
+  ) -> ServerResult<Response> {
+    Self::get_drc20_by_address(index, params.0, Some(params.1), query).await
+  }
+
+  async fn drc20_by_address_unpaginated(
+    Extension(index): Extension<Arc<Index>>,
+    Path(params): Path<String>,
+    Query(query): Query<Drc20BalanceQuery>,
+  ) -> ServerResult<Response> {
+    Self::get_drc20_by_address(index, params, None, query).await
+  }
+
+  async fn get_drc20_by_address(
+    index: Arc<Index>,
+    address: String,
+    page: Option<u32>,
+    query: Drc20BalanceQuery,
+  ) -> ServerResult<Response> {
+    task::block_in_place(|| {
+      let (address, page) = (address.clone(), page.unwrap_or(0));
+      let address_from_str =
+        Address::from_str(&address).map_err(|err| ServerError::BadRequest(err.to_string()))?;
+      let value_filter = query.value_filter.unwrap_or(0);
+      let show_utxos = query.show_utxos.unwrap_or(true);
+
+      let mut drc20_utxos: Vec<(DRC20, Utxo, InscriptionId, u64, u64, bool)> = Vec::new();
+
+      if show_utxos {
+        let outpoints: Vec<OutPoint> = index.get_account_outputs(address.clone())?;
+
+        let mut inscription_ids_to_check: Vec<InscriptionId> = Vec::new();
+
+        for outpoint in outpoints {
+          let inscriptions = index.get_inscriptions_on_output(outpoint)?;
+
+          if inscriptions.is_empty() {
+            continue;
+          }
+
+          for inscription_id in inscriptions {
+            let inscription = index
+              .get_inscription_by_id(inscription_id)?
+              .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+            let entry = index
+              .get_inscription_entry(inscription_id)?
+              .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+            let satpoint = index
+              .get_inscription_satpoint_by_id(inscription_id)?
+              .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+            let content_type = inscription.content_type().map(|s| s.to_string());
+            let content = inscription.into_body();
+
+            let str_content = match (content_type, content) {
+              (Some(ref ct), Some(c))
+                if ct.starts_with("application/json") || ct.starts_with("text") =>
+              {
+                Some(String::from_utf8_lossy(c.as_slice()).to_string())
+              }
+              (None, Some(c)) => Some(String::from_utf8_lossy(c.as_slice()).to_string()),
+              _ => None,
+            };
+
+            if let Some(content) = str_content {
+              let drc20 = DRC20::from_json_string(content.as_str());
+              if let Some(drc20) = drc20 {
+                if let Some(filter) = query.tick.clone() {
+                  if filter != drc20.clone().tick.unwrap_or_default() {
+                    continue;
+                  }
+                }
+                let txid = outpoint.txid;
+                let vout = outpoint.vout;
+                let output = index
+                  .get_transaction(txid)?
+                  .ok_or_not_found(|| format!("dunes {txid} current transaction"))?
+                  .output
+                  .into_iter()
+                  .nth(vout.try_into().unwrap())
+                  .ok_or_not_found(|| format!("dunes {vout} current transaction output"))?;
+                let shibes = output.value;
+                let script = output.script_pubkey;
+
+                if value_filter > 0 && shibes <= value_filter {
+                  continue;
+                }
+
+                if let Some(ref op) = drc20.op {
+                  if *op == Operation::Transfer {
+                    inscription_ids_to_check.push(inscription_id);
+                  }
+                }
+
+                let confirmations =
+                  if let Some(block_hash_info) = index.get_transaction_blockhash(txid)? {
+                    block_hash_info.confirmations
+                  } else {
+                    None
+                  };
+
+                drc20_utxos.push((
+                  drc20.clone(),
+                  Utxo {
+                    txid,
+                    vout,
+                    script,
+                    shibes,
+                    confirmations,
+                  },
+                  inscription_id,
+                  entry.inscription_number,
+                  satpoint.offset,
+                  false,
+                ));
+              }
+            };
+          }
+        }
+        if !inscription_ids_to_check.is_empty() {
+          let transferable_logs = index
+            .get_drc20_transferable_by_id(
+              &ScriptKey::from_address(address_from_str.clone(), index.get_network()?),
+              &inscription_ids_to_check,
+            )
+            .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+          let mut result_map: HashMap<InscriptionId, bool> = HashMap::new();
+          for (inscription_id, log) in transferable_logs {
+            result_map.insert(inscription_id, log.is_some());
+          }
+          for (drc20, _, id, _, _, ref mut valid) in &mut drc20_utxos {
+            if let Some(ref op) = drc20.op {
+              if *op == Operation::Transfer {
+                if let Some(&result) = result_map.get(id) {
+                  *valid = result;
+                }
+              }
+            }
+          }
+        }
+      }
+      /*let show_all = query.show_all.unwrap_or(false);
+      let items_per_page = 10usize;
+      let page = page as usize;
+      let mut start_index = if page == 0 { 0 } else { (page - 1) * items_per_page };
+      let mut element_counter = 0;*/
+
+      let mut drc20balances: Vec<DRC20Balance> = Vec::new();
+
+      let balance = index
+        .get_drc20_balances(&ScriptKey::from_address(
+          address_from_str,
+          index.get_network()?,
+        ))
+        .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+
+      if !balance.is_empty() {
+        for entry in balance {
+          let tick = Tick::as_str(&entry.tick.clone()).to_string();
+          if let Some(filter) = query.tick.clone() {
+            if filter != tick {
+              continue;
+            }
+          }
+          if entry.overall_balance == 0 {
+            continue;
+          }
+          let utxos: Vec<DRC20Output> = drc20_utxos
+            .iter()
+            .filter(|(d20, _, _, _, _, _)| d20.clone().tick.unwrap_or_default() == tick)
+            .map(|(d20, utxo, id, number, offset, valid)| {
+              let balance = d20.clone().amt.unwrap_or("0".to_string());
+              let op = d20.clone().op.unwrap_or(Operation::Unknown);
+              DRC20Output {
+                utxo: utxo.clone(),
+                drc20: DRC20UtxoOutput {
+                  balance,
+                  operation: op,
+                  valid: *valid,
+                },
+                inscription_id: *id,
+                inscription_number: *number,
+                offset: *offset,
+              }
+            })
+            .collect();
+          let token_info = index.get_drc20_token_info(&entry.tick.clone())?;
+          let token_info_clone = token_info.clone().unwrap();
+          let decimals = token_info_clone.decimal;
+          let overall_balance = entry.overall_balance;
+          let transferable_balance = entry.transferable_balance;
+          if let Some(drc20_balance) = DRC20Balance::from_strings(
+            tick.as_str(),
+            format_balance(entry.transferable_balance, decimals).as_str(),
+            format_balance(entry.overall_balance - entry.transferable_balance, decimals).as_str(),
+            utxos,
+          ) {
+            drc20balances.push(drc20_balance);
+          }
+        }
+      }
+      Ok(Json(json!({"drc20": drc20balances})).into_response())
+    })
   }
 
   async fn inscriptions_by_address(
@@ -784,7 +1021,7 @@ impl Server {
         if let Some(content) = str_content.clone() {
           let drc20 = DRC20::from_json_string(content.as_str());
           if drc20.is_some() {
-            element_counter -= 1;
+            element_counter = element_counter.checked_sub(1).unwrap_or(0);
             continue;
           }
         };
@@ -1031,70 +1268,253 @@ impl Server {
   async fn drc20_tick_info(
     Extension(index): Extension<Arc<Index>>,
     Path(tick): Path<String>,
+    Query(query): Query<Drc20TickInfoQuery>,
   ) -> Result<Response, ServerError> {
     let tick =
       &Tick::from_str(tick.as_str()).map_err(|err| ServerError::BadRequest(err.to_string()))?;
     let token_info = index.get_drc20_token_info(&tick.clone())?;
 
-    if let Some(token_info) = token_info {
-      Ok(Json(token_info).into_response())
+    if query.show_holder.unwrap_or(false) {
+      let holder = index.get_drc20_token_holder(&tick.clone())?;
+
+      let mut holder_to_balance: HashMap<String, HolderBalanceForTick> = HashMap::new();
+
+      for script_key in holder.clone() {
+        if let Some(balance) = index
+          .get_drc20_balance(&script_key, &tick)
+          .map_err(|err| ServerError::BadRequest(err.to_string()))?
+        {
+          let token_info_clone = token_info.clone().unwrap();
+          let decimals = token_info_clone.decimal;
+          let overall_balance = balance.overall_balance;
+          let transferable_balance = balance.transferable_balance;
+          holder_to_balance.insert(
+            script_key.to_string(),
+            HolderBalanceForTick {
+              overall_balance: format_balance(overall_balance, decimals),
+              transferable_balance: format_balance(transferable_balance, decimals),
+              available_balance: format_balance(overall_balance - transferable_balance, decimals),
+            },
+          );
+        }
+      }
+
+      let nr_of_holder = holder.len();
+
+      Ok(
+        Json(ExtendedTokenInfo {
+          token_info,
+          holder_info: HoldersInfoForTick {
+            holder_to_balance,
+            nr_of_holder,
+          },
+        })
+        .into_response(),
+      )
     } else {
-      Err(ServerError::BadRequest("No token info found".to_string()))
+      if let Some(token_info) = token_info {
+        Ok(Json(token_info).into_response())
+      } else {
+        Err(ServerError::BadRequest("No token info found".to_string()))
+      }
+    }
+  }
+
+  async fn drc20_tick_holder(
+    Extension(index): Extension<Arc<Index>>,
+    Path(tick): Path<String>,
+  ) -> Result<Response, ServerError> {
+    let tick =
+      &Tick::from_str(tick.as_str()).map_err(|err| ServerError::BadRequest(err.to_string()))?;
+    let holder = index.get_drc20_token_holder(&tick.clone())?;
+    let token_info = index.get_drc20_token_info(&tick.clone())?;
+
+    let mut holder_to_balance: HashMap<String, HolderBalanceForTick> = HashMap::new();
+
+    for script_key in holder.clone() {
+      if let Some(balance) = index
+        .get_drc20_balance(&script_key, &tick)
+        .map_err(|err| ServerError::BadRequest(err.to_string()))
+        .unwrap_or(None)
+      {
+        let token_info_clone = token_info.clone().unwrap();
+        let decimals = token_info_clone.decimal;
+        let overall_balance = balance.overall_balance;
+        let transferable_balance = balance.transferable_balance;
+        holder_to_balance.insert(
+          script_key.to_string(),
+          HolderBalanceForTick {
+            overall_balance: format_balance(overall_balance, decimals),
+            transferable_balance: format_balance(transferable_balance, decimals),
+            available_balance: format_balance(overall_balance - transferable_balance, decimals),
+          },
+        );
+      }
+    }
+
+    let nr_of_holder = holder.len();
+
+    if nr_of_holder > 0 {
+      Ok(
+        Json(HoldersInfoForTick {
+          holder_to_balance,
+          nr_of_holder,
+        })
+        .into_response(),
+      )
+    } else {
+      Err(ServerError::BadRequest(
+        "No token holder info found".to_string(),
+      ))
     }
   }
 
   async fn drc20_all_tick_info(
     Extension(index): Extension<Arc<Index>>,
+    Query(query): Query<Drc20TickInfoQuery>,
   ) -> Result<Response, ServerError> {
     let token_info = index
       .get_drc20_tokens_info()
       .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+
+    if query.show_holder.unwrap_or(false) {
+      let extended_token_info: Vec<ExtendedTokenInfo> = token_info
+        .iter()
+        .map(|info| {
+          let tick = info.tick.clone();
+          let holder = index
+            .get_drc20_token_holder(&tick.clone())
+            .unwrap_or(Vec::new());
+
+          let mut holder_to_balance: HashMap<String, HolderBalanceForTick> = HashMap::new();
+
+          for script_key in holder.clone() {
+            if let Some(balance) = index
+              .get_drc20_balance(&script_key, &tick)
+              .map_err(|err| ServerError::BadRequest(err.to_string()))
+              .unwrap_or(None)
+            {
+              let token_info_clone = info.clone();
+              let decimals = token_info_clone.decimal;
+              let overall_balance = balance.overall_balance;
+              let transferable_balance = balance.transferable_balance;
+              holder_to_balance.insert(
+                script_key.to_string(),
+                HolderBalanceForTick {
+                  overall_balance: format_balance(overall_balance, decimals),
+                  transferable_balance: format_balance(transferable_balance, decimals),
+                  available_balance: format_balance(
+                    overall_balance - transferable_balance,
+                    decimals,
+                  ),
+                },
+              );
+            }
+          }
+
+          let nr_of_holder = holder.len();
+
+          ExtendedTokenInfo {
+            token_info: Some(info.clone()),
+            holder_info: HoldersInfoForTick {
+              holder_to_balance,
+              nr_of_holder,
+            },
+          }
+        })
+        .collect();
+      Ok(Json(extended_token_info).into_response())
+    } else {
+      Ok(Json(token_info).into_response())
+    }
+  }
+
+  async fn drc20_all_ticks(
+    Extension(index): Extension<Arc<Index>>,
+  ) -> Result<Response, ServerError> {
+    let token_info: Vec<Tick> = index
+      .get_drc20_tokens_info()
+      .map_err(|err| ServerError::BadRequest(err.to_string()))?
+      .iter()
+      .map(|info| info.tick.clone())
+      .collect();
+
     Ok(Json(token_info).into_response())
   }
 
-  async fn drc20_balance(
+  async fn drc20_validate(
     Extension(index): Extension<Arc<Index>>,
-    Path(params): Path<(String, String)>,
+    Extension(server_config): Extension<Arc<PageConfig>>,
+    Query(query): Query<ValidityQuery>,
   ) -> Result<Response, ServerError> {
-    let tick = params.0;
-    let address = params.1;
-    let tick = Tick::from_str(&tick).map_err(|err| ServerError::BadRequest(err.to_string()))?;
-    let address =
-      Address::from_str(&address).map_err(|err| ServerError::BadRequest(err.to_string()))?;
+    let inscription_ids: Vec<&str> = query.inscription_ids.split(',').collect();
+    let mut addresses: Vec<Address> = Vec::new();
 
-    let balance = index
-      .get_drc20_balance(&ScriptKey::from_address(address), &tick)
-      .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+    for id in inscription_ids.clone() {
+      let inscription_id =
+        InscriptionId::from_str(id).map_err(|err| ServerError::BadRequest(err.to_string()))?;
 
-    /*let available_balance = if let Some(balance) = balance
-    {
-      balance.overall_balance - balance.transferable_balance
-    } else {
-      0
-    };*/
+      let satpoint = index
+        .get_inscription_satpoint_by_id(inscription_id)?
+        .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
 
-    Ok(Json(balance).into_response())
-  }
+      let output = index
+        .get_transaction(satpoint.outpoint.txid)?
+        .ok_or_not_found(|| format!("inscription {inscription_id} current transaction"))?
+        .output
+        .into_iter()
+        .nth(satpoint.outpoint.vout.try_into().unwrap())
+        .ok_or_not_found(|| format!("inscription {inscription_id} current transaction output"))?;
 
-  async fn drc20_all_balance(
-    Extension(index): Extension<Arc<Index>>,
-    Path(address): Path<String>,
-  ) -> Result<Response, ServerError> {
-    let address =
-      Address::from_str(&address).map_err(|err| ServerError::BadRequest(err.to_string()))?;
+      addresses.push(
+        server_config
+          .chain
+          .address_from_script(&output.script_pubkey)
+          .map_err(|err| ServerError::BadRequest(err.to_string()))?,
+      );
+    }
 
-    let balance = index
-      .get_drc20_balances(&ScriptKey::from_address(address))
-      .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+    if addresses.len() != inscription_ids.len() {
+      return Err(ServerError::BadRequest(
+        "Couldn't find correct amount of addresses for inscription id list".to_string(),
+      ));
+    }
 
-    /*let available_balance = if let Some(balance) = balance
-    {
-      balance.overall_balance - balance.transferable_balance
-    } else {
-      0
-    };*/
+    // Create a map to hold addresses and their corresponding inscription ids
+    let mut address_map: HashMap<Address, Vec<InscriptionId>> = HashMap::new();
 
-    Ok(Json(balance).into_response())
+    for (address, inscription_id) in addresses.iter().zip(inscription_ids.iter()) {
+      let id = InscriptionId::from_str(inscription_id)
+        .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+      address_map
+        .entry(address.clone())
+        .or_insert_with(Vec::new)
+        .push(id);
+    }
+
+    let mut results: HashMap<Address, HashMap<InscriptionId, bool>> = HashMap::new();
+
+    for (address, inscription_ids) in address_map {
+      // Call the function with the list of inscription IDs
+      let transferable_logs = index
+        .get_drc20_transferable_by_id(
+          &ScriptKey::from_address(address.clone(), index.get_network()?),
+          &inscription_ids,
+        )
+        .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+
+      // Create a map to store results
+      let mut result_map: HashMap<InscriptionId, bool> = HashMap::new();
+
+      for (inscription_id, log) in transferable_logs {
+        result_map.insert(inscription_id, log.is_some());
+      }
+
+      // Insert result map into results under the address
+      results.insert(address, result_map);
+    }
+
+    Ok(Json(results).into_response())
   }
 
   async fn range(
@@ -1611,7 +2031,6 @@ impl Server {
     Query(query): Query<JsonQuery>,
   ) -> ServerResult<Response> {
     let json = query.json.unwrap_or(false);
-    let inscription = index.get_inscription_by_id(txid.into())?;
 
     let mut blockhash = None;
     let mut confirmations = None;
@@ -1627,7 +2046,7 @@ impl Server {
         .ok_or_not_found(|| format!("transaction {txid}"))?,
       blockhash,
       confirmations,
-      inscription.map(|_| txid.into()),
+      index.inscription_count(txid)?,
       page_config.chain,
       None,
     );
@@ -1900,6 +2319,33 @@ impl Server {
     Some((headers, inscription.into_body()?))
   }
 
+  pub(super) fn preview_content_security_policy(
+    media: Media,
+    csp: &Option<String>,
+  ) -> ServerResult<[(HeaderName, HeaderValue); 1]> {
+    let default = match media {
+      Media::Audio => "default-src 'self'",
+      Media::Image => "default-src 'self' 'unsafe-inline'",
+      Media::Model => "script-src-elem 'self' https://ajax.googleapis.com",
+      Media::Pdf => "script-src-elem 'self' https://cdn.jsdelivr.net",
+      Media::Text => "default-src 'self'",
+      Media::Unknown => "default-src 'self'",
+      Media::Video => "default-src 'self'",
+      _ => "",
+    };
+
+    let value = if let Some(csp_origin) = &csp {
+      default
+        .replace("'self'", csp_origin)
+        .parse()
+        .map_err(|err| anyhow!("invalid content-security-policy origin `{csp_origin}`: {err}"))?
+    } else {
+      HeaderValue::from_static(default)
+    };
+
+    Ok([(header::CONTENT_SECURITY_POLICY, value)])
+  }
+
   async fn preview(
     Extension(index): Extension<Arc<Index>>,
     Extension(config): Extension<Arc<Config>>,
@@ -1920,47 +2366,34 @@ impl Server {
         .ok_or_not_found(|| format!("delegate {inscription_id}"))?
     }
 
-    return match inscription.media() {
+    let media = inscription.media();
+    let content_security_policy =
+      Self::preview_content_security_policy(media, &page_config.csp_origin)?;
+
+    match media {
       Media::Audio => Ok(PreviewAudioHtml { inscription_id }.into_response()),
       Media::Iframe => Ok(
         Self::content_response(inscription, &page_config)
           .ok_or_not_found(|| format!("inscription {inscription_id} content"))?
           .into_response(),
       ),
-      Media::Model => Ok(
-        (
-          [(
-            header::CONTENT_SECURITY_POLICY,
-            "script-src-elem 'self' https://ajax.googleapis.com",
-          )],
-          PreviewModelHtml { inscription_id },
-        )
-          .into_response(),
-      ),
-      Media::Image => Ok(
-        (
-          [(
-            header::CONTENT_SECURITY_POLICY,
-            "default-src 'self' 'unsafe-inline'",
-          )],
-          PreviewImageHtml { inscription_id },
-        )
-          .into_response(),
-      ),
-      Media::Pdf => Ok(
-        (
-          [(
-            header::CONTENT_SECURITY_POLICY,
-            "script-src-elem 'self' https://cdn.jsdelivr.net",
-          )],
-          PreviewPdfHtml { inscription_id },
-        )
-          .into_response(),
-      ),
-      Media::Text => Ok(PreviewTextHtml { inscription_id }.into_response()),
-      Media::Unknown => Ok(PreviewUnknownHtml.into_response()),
-      Media::Video => Ok(PreviewVideoHtml { inscription_id }.into_response()),
-    };
+      Media::Model => {
+        Ok((content_security_policy, PreviewModelHtml { inscription_id }).into_response())
+      }
+      Media::Image => {
+        Ok((content_security_policy, PreviewImageHtml { inscription_id }).into_response())
+      }
+      Media::Pdf => {
+        Ok((content_security_policy, PreviewPdfHtml { inscription_id }).into_response())
+      }
+      Media::Text => {
+        Ok((content_security_policy, PreviewTextHtml { inscription_id }).into_response())
+      }
+      Media::Unknown => Ok((content_security_policy, PreviewUnknownHtml).into_response()),
+      Media::Video => {
+        Ok((content_security_policy, PreviewVideoHtml { inscription_id }).into_response())
+      }
+    }
   }
 
   async fn inscription(
@@ -2070,6 +2503,53 @@ impl Server {
     Extension(index): Extension<Arc<Index>>,
   ) -> ServerResult<PageHtml<InscriptionsHtml>> {
     Self::inscriptions_inner(page_config, index, None).await
+  }
+
+  async fn inscriptions_validate(
+    Extension(index): Extension<Arc<Index>>,
+    Extension(server_config): Extension<Arc<PageConfig>>,
+    Query(query): Query<ValidityQuery>,
+  ) -> Result<Response, ServerError> {
+    let inscription_ids: Vec<&str> = query.inscription_ids.split(',').collect();
+
+    let mut validate_response: HashMap<InscriptionId, bool> = HashMap::new();
+
+    if let Some(address_string) = query.addresses {
+      let addresses: Vec<&str> = address_string.split(',').collect();
+
+      for (id, address_str) in inscription_ids.iter().zip(addresses.iter()) {
+        let inscription_id =
+          InscriptionId::from_str(id).map_err(|err| ServerError::BadRequest(err.to_string()))?;
+
+        let satpoint = index
+          .get_inscription_satpoint_by_id(inscription_id)?
+          .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+        let output = index
+          .get_transaction(satpoint.outpoint.txid)?
+          .ok_or_not_found(|| format!("inscription {inscription_id} current transaction"))?
+          .output
+          .into_iter()
+          .nth(satpoint.outpoint.vout.try_into().unwrap())
+          .ok_or_not_found(|| format!("inscription {inscription_id} current transaction output"))?;
+
+        let address = Address::from_str(address_str);
+        let address_to_compare =
+          Address::from_script(&output.script_pubkey, server_config.chain.network());
+
+        if address.is_ok() && address_to_compare.is_ok() {
+          if address.unwrap().to_string() == address_to_compare.unwrap().to_string() {
+            validate_response.insert(inscription_id, true);
+          } else {
+            validate_response.insert(inscription_id, false);
+          }
+        } else {
+          validate_response.insert(inscription_id, false);
+        }
+      }
+    }
+
+    Ok(Json(validate_response).into_response())
   }
 
   async fn shibescriptions_by_outputs(
@@ -2276,6 +2756,82 @@ impl Server {
 
     Redirect::to(&destination)
   }
+}
+
+// Helper function to process inscriptions and create InscriptionJson
+async fn process_inscriptions(
+  index: &Index,
+  inscription_ids: &[InscriptionId],
+  tx_id: &Txid,
+  vout: u32,
+) -> ServerResult<Vec<InscriptionJson>> {
+  let mut inscriptions_json = Vec::new();
+
+  for inscription_id in inscription_ids {
+    let inscription = index
+      .get_inscription_by_id(*inscription_id)?
+      .ok_or_not_found(|| format!("inscription {}", inscription_id))?;
+
+    let entry = index
+      .get_inscription_entry(*inscription_id)?
+      .ok_or_not_found(|| format!("inscription {}", inscription_id))?;
+
+    let content_type = inscription.content_type().map(|s| s.to_string());
+    let content_length = inscription.content_length();
+    let content = inscription.into_body();
+
+    let str_content = if let Some(ref ct) = content_type {
+      if ct.starts_with("application/json") || ct.starts_with("text") {
+        content
+      } else {
+        None
+      }
+    } else {
+      content
+    };
+
+    let inscription_json = InscriptionJson {
+      content: str_content,
+      content_length,
+      content_type,
+      genesis_height: entry.height,
+      inscription_id: *inscription_id,
+      inscription_number: entry.inscription_number,
+      timestamp: entry.timestamp,
+      tx_id: tx_id.to_string(),
+      vout,
+    };
+
+    inscriptions_json.push(inscription_json);
+  }
+
+  Ok(inscriptions_json)
+}
+
+fn format_balance(balance: u128, decimal_places: u8) -> String {
+  let factor = 10u128.pow(decimal_places as u32);
+  let integer_part = balance / factor; // Get the integer part
+  let fractional_part = balance % factor; // Get the fractional part
+
+  // If balance is zero or the fractional part is zero, return just the integer part
+  if fractional_part == 0 {
+    return format!("{}", integer_part);
+  }
+
+  // Format the fractional part, trimming trailing zeros
+  let mut fractional_string = format!(
+    "{:0>width$}",
+    fractional_part,
+    width = decimal_places as usize
+  );
+
+  // Remove trailing zeros from the fractional part
+  while fractional_string.ends_with('0') {
+    fractional_string.pop();
+  }
+
+  // Combine integer and cleaned-up fractional part
+  format!("{}.{}", integer_part, fractional_string)
 }
 
 #[cfg(test)]

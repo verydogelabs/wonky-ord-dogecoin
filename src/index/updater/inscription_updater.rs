@@ -179,6 +179,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
     if inscriptions.iter().all(|flotsam| flotsam.offset != 0) {
       let previous_txid = tx.input[0].previous_output.txid;
+      let previous_vout = tx.input[0].previous_output.vout;
       let previous_txid_bytes: [u8; 32] = previous_txid.into_inner();
       let mut txids_vec = vec![];
 
@@ -264,7 +265,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             old_satpoint: SatPoint {
               outpoint: OutPoint {
                 txid: previous_txid,
-                vout: 0,
+                vout: previous_vout,
               },
               offset: 0,
             },

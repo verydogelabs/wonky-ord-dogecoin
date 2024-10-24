@@ -98,7 +98,7 @@ impl Inscription {
       return Media::Unknown;
     };
 
-    let modified_content_type = content_type.replace("; ", ";");
+    let modified_content_type = content_type.replace("; ", ";").replace(" ;", ";");
     modified_content_type.parse().unwrap_or(Media::Unknown)
   }
 

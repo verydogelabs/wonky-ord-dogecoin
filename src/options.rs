@@ -121,7 +121,7 @@ impl Options {
   pub(crate) fn rpc_url(&self) -> String {
     self.rpc_url.clone().unwrap_or_else(|| {
       format!(
-        "127.0.0.1:{}/wallet/{}",
+        "127.0.0.1:{}/{}",
         self.chain().default_rpc_port(),
         self.wallet
       )

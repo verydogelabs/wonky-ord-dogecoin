@@ -26,9 +26,7 @@ use {
   url::Url,
 };
 
-use crate::drc20::{
-  Balance, max_script_tick_key, min_script_tick_key, script_tick_key, Tick, TokenInfo,
-};
+use crate::drc20::{Balance, max_script_tick_key, min_script_tick_key, script_tick_key, Tick, TokenInfo, TransferableLog, min_script_tick_id_key, max_script_tick_id_key};
 use crate::drc20::script_key::ScriptKey;
 use crate::sat::Sat;
 use crate::sat_point::SatPoint;
@@ -36,7 +34,7 @@ use crate::templates::BlockHashAndConfirmations;
 
 pub(crate) use self::entry::DuneEntry;
 
-mod entry;
+pub(crate) mod entry;
 mod reorg;
 mod fetcher;
 mod rtx;
@@ -80,8 +78,9 @@ define_table! { TRANSACTION_ID_TO_TRANSACTION, &TxidValue, &[u8] }
 define_table! { WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP, u32, u128 }
 define_table! { DRC20_BALANCES, &str, &[u8] }
 define_table! { DRC20_TOKEN, &str, &[u8] }
-define_table! { DRC20_INSCRIBE_TRANSFER, &[u8; 36], &[u8] }
+define_table! { DRC20_INSCRIBE_TRANSFER, &InscriptionIdValue, &[u8] }
 define_table! { DRC20_TRANSFERABLELOG, &str, &[u8] }
+define_multimap_table! { DRC20_TOKEN_HOLDER, &str, &str}
 
 pub(crate) struct Index {
   auth: Auth,
@@ -671,28 +670,29 @@ impl Index {
   }
 
   pub(crate) fn get_dune_balance(&self, outpoint: OutPoint, id: DuneId) -> Result<u128> {
-    let rtx = self.database.begin_read()?;
+    if self.block_count()? >= self.first_dune_height && self.index_dunes {
+      let rtx = self.database.begin_read()?;
 
-    let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_DUNE_BALANCES)?;
+      let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_DUNE_BALANCES)?;
 
-    let Some(balances) = outpoint_to_balances.get(&outpoint.store())? else {
-      return Ok(0);
-    };
+      let Some(balances) = outpoint_to_balances.get(&outpoint.store())? else {
+        return Ok(0);
+      };
 
-    let balances_buffer = balances.value();
+      let balances_buffer = balances.value();
 
-    let mut i = 0;
-    while i < balances_buffer.len() {
-      let (balance_id, length) = dunes::varint::decode(&balances_buffer[i..]);
-      i += length;
-      let (amount, length) = dunes::varint::decode(&balances_buffer[i..]);
-      i += length;
+      let mut i = 0;
+      while i < balances_buffer.len() {
+        let (balance_id, length) = dunes::varint::decode(&balances_buffer[i..]);
+        i += length;
+        let (amount, length) = dunes::varint::decode(&balances_buffer[i..]);
+        i += length;
 
-      if DuneId::try_from(balance_id).unwrap() == id {
-        return Ok(amount);
+        if DuneId::try_from(balance_id).unwrap() == id {
+          return Ok(amount);
+        }
       }
     }
-
     Ok(0)
   }
 
@@ -700,57 +700,64 @@ impl Index {
     &self,
     outpoint: OutPoint,
   ) -> Result<Vec<(SpacedDune, Pile)>> {
-    let rtx = &self.database.begin_read()?;
+    if self.block_count()? >= self.first_dune_height && self.index_dunes {
+      let rtx = &self.database.begin_read()?;
 
-    let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_DUNE_BALANCES)?;
+      let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_DUNE_BALANCES)?;
 
-    let id_to_dune_entries = rtx.open_table(DUNE_ID_TO_DUNE_ENTRY)?;
+      let id_to_dune_entries = rtx.open_table(DUNE_ID_TO_DUNE_ENTRY)?;
 
-    let Some(balances) = outpoint_to_balances.get(&outpoint.store())? else {
-      return Ok(Vec::new());
-    };
+      let Some(balances) = outpoint_to_balances.get(&outpoint.store())? else {
+        return Ok(Vec::new());
+      };
 
-    let balances_buffer = balances.value();
+      let balances_buffer = balances.value();
 
-    let mut balances = Vec::new();
-    let mut i = 0;
-    while i < balances_buffer.len() {
-      let (id, length) = dunes::varint::decode(&balances_buffer[i..]);
-      i += length;
-      let (amount, length) = dunes::varint::decode(&balances_buffer[i..]);
-      i += length;
+      let mut balances = Vec::new();
+      let mut i = 0;
+      while i < balances_buffer.len() {
+        let (id, length) = dunes::varint::decode(&balances_buffer[i..]);
+        i += length;
+        let (amount, length) = dunes::varint::decode(&balances_buffer[i..]);
+        i += length;
 
-      let id = DuneId::try_from(id).unwrap();
+        let id = DuneId::try_from(id).unwrap();
 
-      let entry = DuneEntry::load(id_to_dune_entries.get(id.store())?.unwrap().value());
+        let entry = DuneEntry::load(id_to_dune_entries.get(id.store())?.unwrap().value());
 
-      balances.push((
-        entry.spaced_dune(),
-        Pile {
-          amount,
-          divisibility: entry.divisibility,
-          symbol: entry.symbol,
-        },
-      ));
+        balances.push((
+          entry.spaced_dune(),
+          Pile {
+            amount,
+            divisibility: entry.divisibility,
+            symbol: entry.symbol,
+          },
+        ));
+      }
+      Ok(balances)
+    } else {
+      Ok(Vec::new())
     }
-
-    Ok(balances)
   }
 
   pub(crate) fn get_dunic_outputs(&self, outpoints: &[OutPoint]) -> Result<BTreeSet<OutPoint>> {
-    let rtx = self.database.begin_read()?;
+    if self.block_count()? >= self.first_dune_height && self.index_dunes {
+      let rtx = self.database.begin_read()?;
 
-    let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_DUNE_BALANCES)?;
+      let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_DUNE_BALANCES)?;
 
-    let mut dunic = BTreeSet::new();
+      let mut dunic = BTreeSet::new();
 
-    for outpoint in outpoints {
-      if outpoint_to_balances.get(&outpoint.store())?.is_some() {
-        dunic.insert(*outpoint);
+      for outpoint in outpoints {
+        if outpoint_to_balances.get(&outpoint.store())?.is_some() {
+          dunic.insert(*outpoint);
+        }
       }
-    }
 
-    Ok(dunic)
+      Ok(dunic)
+    } else {
+      Ok(BTreeSet::new())
+    }
   }
 
   pub(crate) fn get_dune_balance_map(
@@ -788,29 +795,30 @@ impl Index {
   pub(crate) fn get_dune_balances(&self) -> Result<Vec<(OutPoint, Vec<(DuneId, u128)>)>> {
     let mut result = Vec::new();
 
-    for entry in self
-      .database
-      .begin_read()?
-      .open_table(OUTPOINT_TO_DUNE_BALANCES)?
-      .iter()?
-    {
-      let (outpoint, balances_buffer) = entry?;
-      let outpoint = OutPoint::load(*outpoint.value());
-      let balances_buffer = balances_buffer.value();
+    if self.block_count()? >= self.first_dune_height && self.index_dunes {
+      for entry in self
+        .database
+        .begin_read()?
+        .open_table(OUTPOINT_TO_DUNE_BALANCES)?
+        .iter()?
+      {
+        let (outpoint, balances_buffer) = entry?;
+        let outpoint = OutPoint::load(*outpoint.value());
+        let balances_buffer = balances_buffer.value();
 
-      let mut balances = Vec::new();
-      let mut i = 0;
-      while i < balances_buffer.len() {
-        let (id, length) = dunes::varint::decode(&balances_buffer[i..]);
-        i += length;
-        let (balance, length) = dunes::varint::decode(&balances_buffer[i..]);
-        i += length;
-        balances.push((DuneId::try_from(id)?, balance));
+        let mut balances = Vec::new();
+        let mut i = 0;
+        while i < balances_buffer.len() {
+          let (id, length) = dunes::varint::decode(&balances_buffer[i..]);
+          i += length;
+          let (balance, length) = dunes::varint::decode(&balances_buffer[i..]);
+          i += length;
+          balances.push((DuneId::try_from(id)?, balance));
+        }
+
+        result.push((outpoint, balances));
       }
-
-      result.push((outpoint, balances));
     }
-
     Ok(result)
   }
 
@@ -951,6 +959,101 @@ impl Index {
       );
     } else {
       return Ok(vec![]);
+    }
+  }
+
+  pub(crate) fn get_drc20_token_holder(&self, tick: &Tick) -> Result<Vec<ScriptKey>> {
+    if self.block_count().unwrap() >= self.first_inscription_height {
+      let rtx = self.database.begin_read()?;
+
+      let drc20_token_holder = rtx.open_multimap_table(DRC20_TOKEN_HOLDER)?;
+
+      return Ok(
+        drc20_token_holder
+          .get(tick.to_lowercase().hex().as_str())?
+          .flat_map(|result| {
+            result.into_iter().filter_map(|(scriptKey)| {
+              ScriptKey::from_str(scriptKey.value(), self.chain.network())
+            })
+          })
+          .collect(),
+      );
+    } else {
+      return Ok(vec![]);
+    }
+  }
+
+  pub(crate) fn get_drc20_transferable_by_range(
+    &self,
+    script: &ScriptKey,
+  ) -> Result<Vec<TransferableLog>, redb::Error> {
+    let rtx = self.database.begin_read()?;
+    let drc20_transferable_log = rtx.open_table(DRC20_TRANSFERABLELOG)?;
+    let result = Ok(
+      drc20_transferable_log
+        .range(min_script_tick_key(script).as_str()..max_script_tick_key(script).as_str())?
+        .flat_map(|result| {
+          result.map(|(_, v)| rmp_serde::from_slice::<TransferableLog>(v.value()).unwrap())
+        })
+        .collect(),
+    );
+
+    result
+  }
+
+  pub(crate) fn get_drc20_transferable_by_tick(
+    &self,
+    script: &ScriptKey,
+    tick: &Tick,
+  ) -> Result<Vec<TransferableLog>, redb::Error> {
+    let rtx = self.database.begin_read()?;
+    let drc20_transferable_log = rtx.open_table(DRC20_TRANSFERABLELOG)?;
+    let result = Ok(
+      drc20_transferable_log
+        .range(
+          min_script_tick_id_key(script, tick).as_str()
+            ..max_script_tick_id_key(script, tick).as_str(),
+        )?
+        .flat_map(|result| {
+          result.map(|(_, v)| rmp_serde::from_slice::<TransferableLog>(v.value()).unwrap())
+        })
+        .collect(),
+    );
+
+    result
+  }
+
+  pub(crate) fn get_drc20_transferable_by_id(
+    &self,
+    script_key: &ScriptKey,
+    inscription_ids: &[InscriptionId],
+  ) -> Result<HashMap<InscriptionId, Option<TransferableLog>>, redb::Error> {
+    if self.block_count().unwrap() >= self.first_inscription_height {
+      let rtx = self.database.begin_read()?;
+
+      let drc20_transferable_log = rtx.open_table(DRC20_TRANSFERABLELOG)?;
+
+      let transferable_log_vec: Vec<TransferableLog> = drc20_transferable_log
+        .range(min_script_tick_key(script_key).as_str()..max_script_tick_key(script_key).as_str())?
+        .flat_map(|result| {
+          result.map(|(_, v)| rmp_serde::from_slice::<TransferableLog>(v.value()).unwrap())
+        })
+        .collect();
+
+      Ok(
+        inscription_ids
+          .iter()
+          .map(|id| {
+            let transferable_log = transferable_log_vec
+              .iter()
+              .find(|log| log.inscription_id == *id)
+              .cloned();
+            (*id, transferable_log)
+          })
+          .collect(),
+      )
+    } else {
+      return Ok(inscription_ids.iter().map(|id| (*id, None)).collect());
     }
   }
 
@@ -1100,6 +1203,25 @@ impl Index {
     )
   }
 
+  pub(crate) fn inscription_count(&self, txid: Txid) -> Result<u32> {
+    let start_id = InscriptionId { index: 0, txid };
+
+    let end_id = InscriptionId {
+      index: u32::MAX,
+      txid,
+    };
+
+    Ok(
+      self
+        .database
+        .begin_read()?
+        .open_table(INSCRIPTION_ID_TO_SATPOINT)?
+        .range::<&InscriptionIdValue>(&start_id.store()..&end_id.store())?
+        .count()
+        .try_into()?,
+    )
+  }
+
   pub(crate) fn get_inscriptions_on_output(
     &self,
     outpoint: OutPoint,
@@ -1136,25 +1258,29 @@ impl Index {
       }
     }
 
-    self.client.get_raw_transaction(&txid).into_option()
+    if let Ok(tx) = self.client.get_raw_transaction(&txid) {
+      Ok(Some(tx))
+    } else {
+      Ok(None)
+    }
+  }
+
+  pub(crate) fn get_network(&self) -> Result<Network> {
+    Ok(self.chain.network())
   }
 
   pub(crate) fn get_transaction_blockhash(
     &self,
     txid: Txid,
   ) -> Result<Option<BlockHashAndConfirmations>> {
-    Ok(
-      self
-        .client
-        .get_raw_transaction_info(&txid)
-        .into_option()?
-        .and_then(|info| {
-          Some(BlockHashAndConfirmations {
-            hash: info.blockhash,
-            confirmations: info.confirmations,
-          })
-        }),
-    )
+    if let Ok(result) = self.client.get_raw_transaction_info(&txid) {
+      Ok(Some(BlockHashAndConfirmations {
+        hash: result.blockhash,
+        confirmations: result.confirmations,
+      }))
+    } else {
+      Ok(None)
+    }
   }
 
   pub(crate) fn is_transaction_in_active_chain(&self, txid: Txid) -> Result<bool> {

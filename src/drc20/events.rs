@@ -1,3 +1,4 @@
+use bitcoin::Txid;
 use super::*;
 use crate::{InscriptionId, SatPoint};
 use serde::{Deserialize, Serialize};
@@ -26,33 +27,46 @@ pub struct Receipt {
 pub enum Event {
     Deploy(DeployEvent),
     Mint(MintEvent),
-    InscribeTransfer(InscripbeTransferEvent),
+    InscribeTransfer(InscribeTransferEvent),
     Transfer(TransferEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct DeployEvent {
-    pub supply: u128,
-    pub limit_per_mint: u128,
-    pub tick: Tick,
+  pub txid: Option<Txid>,
+  pub vout: u32,
+  pub deployed_by: ScriptKey,
+  pub supply: u128,
+  pub limit_per_mint: u128,
+  pub decimal: u8,
+  pub tick: Tick,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct MintEvent {
-    pub tick: Tick,
-    pub amount: u128,
-    pub msg: Option<String>,
+  pub txid: Option<Txid>,
+  pub vout: u32,
+  pub to: ScriptKey,
+  pub tick: Tick,
+  pub amount: u128,
+  pub msg: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct InscripbeTransferEvent {
-    pub tick: Tick,
-    pub amount: u128,
+pub struct InscribeTransferEvent {
+  pub txid: Option<Txid>,
+  pub to: ScriptKey,
+  pub vout: u32,
+  pub tick: Tick,
+  pub amount: u128,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct TransferEvent {
-    pub tick: Tick,
-    pub amount: u128,
-    pub msg: Option<String>,
+  pub txid: Option<Txid>,
+  pub from: ScriptKey,
+  pub to: ScriptKey,
+  pub vout: u32,
+  pub tick: Tick,
+  pub amount: u128,
 }

@@ -3,7 +3,7 @@ pub(crate) use {
   block::BlockHashAndConfirmations,
   block::BlockHtml,
   block::BlockJson,
-  drc20::DRC20,
+  drc20::{DRC20, DRC20Balance, DRC20Output, DRC20UtxoOutput, Operation},
   dune::{
     DuneAddressJson, DuneBalance, DuneEntryJson, DuneHtml, DuneJson, DuneOutput, DuneOutputJson,
   },

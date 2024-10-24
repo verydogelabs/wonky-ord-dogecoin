@@ -5,6 +5,7 @@ use redb::{ReadableTable, Table};
 use crate::drc20::operation::{Action, deserialize_drc20_operation, InscriptionOp, Operation};
 use crate::drc20::transfer::Transfer;
 use crate::drc20::TransferInfo;
+use crate::index::entry::{Entry, InscriptionIdValue};
 use crate::inscription::Inscription;
 use crate::inscription_id::InscriptionId;
 use crate::sat_point::SatPoint;
@@ -29,7 +30,7 @@ pub struct Message {
 
 impl Message {
   pub(crate) fn resolve<'a, 'db, 'tx>(
-    drc20_inscribe_transfer: &'a mut Table<'db, 'tx, &'static [u8; 36], &'static [u8]>,
+    drc20_inscribe_transfer: &'a mut Table<'db, 'tx, &'static InscriptionIdValue, &'static [u8]>,
     new_inscriptions: &[Inscription],
     op: &InscriptionOp,
   ) -> Result<Option<Message>> {
@@ -61,7 +62,7 @@ impl Message {
           // Ignore non-first transfer operations.
           Ok(Some(transfer_info)) if op.inscription_id.txid == op.old_satpoint.outpoint.txid => {
             Operation::Transfer(Transfer {
-              tick: transfer_info.tick.as_str().to_string(),
+              tick: transfer_info.tick.as_str().to_lowercase().to_string(),
               amount: transfer_info.amt.to_string(),
             })
           }
@@ -88,16 +89,12 @@ impl Message {
 }
 
 fn get_inscribe_transfer_inscription<'a, 'db, 'tx>(
-  drc20_inscribe_transfer: &'a mut Table<'db, 'tx, &'static [u8; 36], &'static [u8]>,
+  drc20_inscribe_transfer: &'a mut Table<'db, 'tx, &'static InscriptionIdValue, &'static [u8]>,
   inscription_id: InscriptionId,
 ) -> Result<Option<TransferInfo>, redb::Error> {
-  let mut value = [0; 36];
-  let (txid, index) = value.split_at_mut(32);
-  txid.copy_from_slice(inscription_id.txid.as_ref());
-  index.copy_from_slice(&inscription_id.index.to_be_bytes());
   Ok(
     drc20_inscribe_transfer
-      .get(&value)?
-      .map(|v| bincode::deserialize::<TransferInfo>(v.value()).unwrap()),
+      .get(&inscription_id.store())?
+      .map(|v| rmp_serde::from_slice::<TransferInfo>(v.value()).unwrap()),
   )
 }
