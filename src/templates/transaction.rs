@@ -6,7 +6,7 @@ pub(crate) struct TransactionHtml {
   confirmations: Option<u32>,
   chain: Chain,
   etching: Option<SpacedDune>,
-  inscription: Option<InscriptionId>,
+  inscription_count: u32,
   transaction: Transaction,
   txid: Txid,
 }
@@ -17,7 +17,7 @@ pub(crate) struct TransactionJson {
   confirmations: Option<u32>,
   chain: Chain,
   etching: Option<SpacedDune>,
-  inscription: Option<InscriptionId>,
+  inscription_count: u32,
   transaction: Transaction,
   txid: Txid,
 }
@@ -27,7 +27,7 @@ impl TransactionHtml {
     transaction: Transaction,
     blockhash: Option<BlockHash>,
     confirmations: Option<u32>,
-    inscription: Option<InscriptionId>,
+    inscription_count: u32,
     chain: Chain,
     etching: Option<SpacedDune>,
   ) -> Self {
@@ -37,7 +37,7 @@ impl TransactionHtml {
       confirmations,
       chain,
       etching,
-      inscription,
+      inscription_count,
       transaction,
     }
   }
@@ -48,7 +48,7 @@ impl TransactionHtml {
       confirmations: self.confirmations,
       chain: self.chain.clone(),
       etching: self.etching.clone(),
-      inscription: self.inscription.clone(),
+      inscription_count: self.inscription_count.clone(),
       transaction: self.transaction.clone(),
       txid: self.txid.clone(),
     }

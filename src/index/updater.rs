@@ -404,6 +404,7 @@ impl<'index> Updater<'_> {
     let mut transaction_id_to_transaction = wtx.open_table(TRANSACTION_ID_TO_TRANSACTION)?;
 
     let mut drc20_token_info = wtx.open_table(DRC20_TOKEN)?;
+    let mut drc20_token_holder = wtx.open_multimap_table(DRC20_TOKEN_HOLDER)?;
     let mut drc20_token_balance = wtx.open_table(DRC20_BALANCES)?;
     let mut drc20_inscribe_transfer = wtx.open_table(DRC20_INSCRIBE_TRANSFER)?;
     let mut drc20_transferable_log = wtx.open_table(DRC20_TRANSFERABLELOG)?;
@@ -540,6 +541,7 @@ impl<'index> Updater<'_> {
         // Create a protocol manager to index the block of drc20 data.
         Drc20Updater::new(
           &mut drc20_token_info,
+          &mut drc20_token_holder,
           &mut drc20_token_balance,
           &mut drc20_inscribe_transfer,
           &mut drc20_transferable_log,
